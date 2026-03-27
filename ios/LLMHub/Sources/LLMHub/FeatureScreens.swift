@@ -41,6 +41,16 @@ private func selectedFeatureModel(named selectedModelName: String) -> AIModel? {
     ModelData.models.first(where: { $0.name == selectedModelName })
 }
 
+@MainActor
+private func syncRunAnywhereModelDiscovery() async {
+    do {
+        try RunAnywhere.initialize(environment: .development)
+    } catch {
+        // Ignore repeated initialization attempts.
+    }
+    _ = await RunAnywhere.discoverDownloadedModels()
+}
+
 private struct FeatureModelSettingsSheet: View {
     @EnvironmentObject var settings: AppSettings
     @Binding var selectedModelName: String
@@ -50,10 +60,12 @@ private struct FeatureModelSettingsSheet: View {
     @Binding var isLoading: Bool
     @Binding var errorMessage: String?
     let supportsVisionToggle: Bool
+    let writingMode: Binding<WritingAidMode>?
     let onLoad: () async -> Void
     let onUnload: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var llm = LLMBackend.shared
     @State private var models: [AIModel] = []
     @State private var isRefreshingModels = false
 
@@ -62,9 +74,27 @@ private struct FeatureModelSettingsSheet: View {
             ?? selectedFeatureModel(named: selectedModelName)
     }
 
+    private var selectedModelSupportsThinking: Bool {
+        guard let model = selectedModel else { return false }
+        let loweredName = model.name.lowercased()
+        return model.supportsThinking
+            || loweredName.contains("thinking")
+            || loweredName.contains("reasoning")
+            || loweredName.contains("gpt-oss")
+            || loweredName.contains("gpt_oss")
+    }
+
+    private var selectedModelSupportsVision: Bool {
+        supportsVisionToggle && (selectedModel?.supportsVision == true)
+    }
+
     private var maxContextCap: Double {
         let advertised = selectedModel?.contextWindowSize ?? 4096
         return Double(max(1, advertised))
+    }
+
+    private var isSelectedModelLoaded: Bool {
+        llm.isLoaded && llm.currentlyLoadedModel == selectedModelName
     }
 
     var body: some View {
@@ -109,13 +139,30 @@ private struct FeatureModelSettingsSheet: View {
                             }
                             .tint(.blue.opacity(0.86))
 
-                            Toggle(settings.localized("enable_thinking"), isOn: $enableThinking)
-                                .tint(.blue.opacity(0.86))
-                                .foregroundColor(.white)
-                            if supportsVisionToggle {
+                            if selectedModelSupportsThinking {
+                                Toggle(settings.localized("enable_thinking"), isOn: $enableThinking)
+                                    .tint(.blue.opacity(0.86))
+                                    .foregroundColor(.white)
+                            }
+                            if selectedModelSupportsVision {
                                 Toggle(settings.localized("scam_detector_enable_vision"), isOn: $enableVision)
                                     .tint(.blue.opacity(0.86))
                                     .foregroundColor(.white)
+                            }
+
+                            if let writingMode {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(settings.localized("writing_aid_select_mode"))
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundColor(.white.opacity(0.92))
+
+                                    Picker("", selection: writingMode) {
+                                        ForEach(WritingAidMode.allCases, id: \.rawValue) { mode in
+                                            Text(settings.localized(mode.rawValue)).tag(mode)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
                             }
                         }
                         .padding()
@@ -130,21 +177,55 @@ private struct FeatureModelSettingsSheet: View {
                             Button {
                                 Task { await onLoad() }
                             } label: {
-                                if isLoading {
-                                    ProgressView()
-                                } else {
-                                    Text(settings.localized("load_model"))
+                                HStack {
+                                    Spacer()
+                                    if isLoading {
+                                        ProgressView()
+                                    } else {
+                                        Text(settings.localized("load_model"))
+                                    }
+                                    Spacer()
                                 }
+                                .padding(.vertical, 12)
+                                .contentShape(Rectangle())
                             }
-                            .buttonStyle(ApolloIconButtonStyle())
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.blue.opacity(0.86))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                            )
+                            .foregroundStyle(.white)
                             .tint(.blue.opacity(0.86))
                             .disabled(isLoading || selectedModelName.isEmpty || isRefreshingModels)
 
-                            Button(settings.localized("unload_model"), role: .destructive) {
-                                onUnload()
+                            if isSelectedModelLoaded {
+                                Button(role: .destructive) {
+                                    onUnload()
+                                } label: {
+                                    HStack {
+                                        Spacer()
+                                        Text(settings.localized("unload_model"))
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 12)
+                                    .contentShape(Rectangle())
+                                }
+                                .frame(maxWidth: .infinity)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.red.opacity(0.10))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.red.opacity(0.9), lineWidth: 1)
+                                )
+                                .foregroundStyle(Color.red.opacity(0.95))
+                                .disabled(isLoading)
                             }
-                            .buttonStyle(ApolloIconButtonStyle())
-                            .disabled(isLoading)
                         }
 
                         if let errorMessage, !errorMessage.isEmpty {
@@ -166,6 +247,10 @@ private struct FeatureModelSettingsSheet: View {
             }
             .task {
                 await refreshModelsIfNeeded()
+                normalizeToggleStatesForSelectedModel()
+            }
+            .onChange(of: selectedModelName) { _, _ in
+                normalizeToggleStatesForSelectedModel()
             }
         }
     }
@@ -173,6 +258,7 @@ private struct FeatureModelSettingsSheet: View {
     private func refreshModelsIfNeeded() async {
         if !models.isEmpty { return }
         isRefreshingModels = true
+        await syncRunAnywhereModelDiscovery()
         let loaded = downloadableFeatureModels()
         models = loaded
         if selectedModelName.isEmpty || !loaded.contains(where: { $0.name == selectedModelName }) {
@@ -181,6 +267,15 @@ private struct FeatureModelSettingsSheet: View {
         let cap = Double(max(1, selectedModel?.contextWindowSize ?? 4096))
         maxTokens = min(max(1, maxTokens), cap)
         isRefreshingModels = false
+    }
+
+    private func normalizeToggleStatesForSelectedModel() {
+        if !selectedModelSupportsThinking {
+            enableThinking = false
+        }
+        if supportsVisionToggle && !selectedModelSupportsVision {
+            enableVision = false
+        }
     }
 }
 
@@ -231,44 +326,73 @@ struct WritingAidScreen: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(settings.localized("writing_aid_input_label"))
                             .font(.headline)
+
                         TextEditor(text: $inputText)
-                            .frame(minHeight: 140)
+                            .frame(minHeight: 160)
                             .padding(8)
-                            .background(.ultraThinMaterial)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.white.opacity(0.02))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                        HStack {
-                            Button {
-                                #if canImport(UIKit)
-                                if let clip = UIPasteboard.general.string, !clip.isEmpty {
-                                    inputText += clip
-                                }
-                                #endif
-                            } label: {
-                                Label(settings.localized("paste"), systemImage: "doc.on.clipboard")
+                        Button {
+                            #if canImport(UIKit)
+                            if let clip = UIPasteboard.general.string, !clip.isEmpty {
+                                inputText += clip
                             }
-                            .buttonStyle(ApolloIconButtonStyle())
-                            Spacer()
+                            #endif
+                        } label: {
+                            Image(systemName: "doc.on.clipboard")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(width: 44, height: 44)
                         }
+                        .foregroundStyle(.white)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
                     }
                     .padding(.horizontal)
-
-                    Picker("", selection: $selectedMode) {
-                        ForEach(WritingAidMode.allCases, id: \.rawValue) { mode in
-                            Text(settings.localized(mode.rawValue)).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    )
                     .padding(.horizontal)
 
                     HStack(spacing: 12) {
                         Button {
                             toggleProcess()
                         } label: {
-                            Text(isProcessing ? settings.localized("processing_tap_to_cancel") : settings.localized("writing_aid_process"))
-                                .frame(maxWidth: .infinity)
+                            HStack(spacing: 8) {
+                                if isProcessing {
+                                    ProgressView()
+                                        .tint(.white)
+                                        .scaleEffect(0.85)
+                                } else {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                }
+                                Text(settings.localized("writing_aid_process"))
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
                         }
-                        .buttonStyle(ApolloIconButtonStyle())
+                        .foregroundStyle(.white)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.blue.opacity(0.86))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
                         .disabled(isLoading || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         Button(settings.localized("copy")) {
@@ -276,7 +400,17 @@ struct WritingAidScreen: View {
                             UIPasteboard.general.string = outputText
                             #endif
                         }
-                        .buttonStyle(ApolloIconButtonStyle())
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .foregroundStyle(.white.opacity(0.95))
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        )
                         .disabled(outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .padding(.horizontal)
@@ -310,7 +444,13 @@ struct WritingAidScreen: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: onNavigateBack) { Image(systemName: "arrow.left") }
+                Button {
+                    generationTask?.cancel()
+                    llm.unloadModel()
+                    onNavigateBack()
+                } label: {
+                    Image(systemName: "arrow.left")
+                }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
@@ -325,17 +465,23 @@ struct WritingAidScreen: View {
                 isLoading: $isLoading,
                 errorMessage: $errorMessage,
                 supportsVisionToggle: false,
+                writingMode: $selectedMode,
                 onLoad: { await ensureModelLoaded(force: true) },
                 onUnload: { llm.unloadModel() }
             )
         }
         .onAppear {
-            if selectedModelName.isEmpty {
-                selectedModelName = downloadableFeatureModels().first?.name ?? ""
+            Task {
+                await syncRunAnywhereModelDiscovery()
+                let available = downloadableFeatureModels()
+                if selectedModelName.isEmpty || !available.contains(where: { $0.name == selectedModelName }) {
+                    selectedModelName = available.first?.name ?? ""
+                }
             }
         }
         .onDisappear {
             generationTask?.cancel()
+            llm.unloadModel()
         }
     }
 
@@ -493,7 +639,7 @@ struct ScamDetectorScreen: View {
                             .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                        HStack {
+                        HStack(spacing: 8) {
                             Button {
                                 #if canImport(UIKit)
                                 if let clip = UIPasteboard.general.string, !clip.isEmpty {
@@ -501,9 +647,19 @@ struct ScamDetectorScreen: View {
                                 }
                                 #endif
                             } label: {
-                                Label(settings.localized("paste"), systemImage: "doc.on.clipboard")
+                                Image(systemName: "doc.on.clipboard")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .frame(width: 44, height: 44)
                             }
-                            .buttonStyle(ApolloIconButtonStyle())
+                            .foregroundStyle(.white)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                            )
                             Spacer()
                         }
 
@@ -599,7 +755,13 @@ struct ScamDetectorScreen: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: onNavigateBack) { Image(systemName: "arrow.left") }
+                Button {
+                    generationTask?.cancel()
+                    llm.unloadModel()
+                    onNavigateBack()
+                } label: {
+                    Image(systemName: "arrow.left")
+                }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
@@ -614,13 +776,18 @@ struct ScamDetectorScreen: View {
                 isLoading: $isLoading,
                 errorMessage: $errorMessage,
                 supportsVisionToggle: true,
+                writingMode: nil,
                 onLoad: { await ensureModelLoaded(force: true) },
                 onUnload: { llm.unloadModel() }
             )
         }
         .onAppear {
-            if selectedModelName.isEmpty {
-                selectedModelName = downloadableFeatureModels().first?.name ?? ""
+            Task {
+                await syncRunAnywhereModelDiscovery()
+                let available = downloadableFeatureModels()
+                if selectedModelName.isEmpty || !available.contains(where: { $0.name == selectedModelName }) {
+                    selectedModelName = available.first?.name ?? ""
+                }
             }
         }
         .onChange(of: selectedImageItem) { _, item in
@@ -639,6 +806,7 @@ struct ScamDetectorScreen: View {
         }
         .onDisappear {
             generationTask?.cancel()
+            llm.unloadModel()
         }
     }
 
@@ -993,7 +1161,13 @@ struct VibeCoderScreen: View {
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: onNavigateBack) { Image(systemName: "arrow.left") }
+                Button {
+                    generationTask?.cancel()
+                    llm.unloadModel()
+                    onNavigateBack()
+                } label: {
+                    Image(systemName: "arrow.left")
+                }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
@@ -1008,13 +1182,18 @@ struct VibeCoderScreen: View {
                 isLoading: $isLoading,
                 errorMessage: $errorMessage,
                 supportsVisionToggle: false,
+                writingMode: nil,
                 onLoad: { await ensureModelLoaded(force: true) },
                 onUnload: { llm.unloadModel() }
             )
         }
         .onAppear {
-            if selectedModelName.isEmpty {
-                selectedModelName = downloadableFeatureModels().first?.name ?? ""
+            Task {
+                await syncRunAnywhereModelDiscovery()
+                let available = downloadableFeatureModels()
+                if selectedModelName.isEmpty || !available.contains(where: { $0.name == selectedModelName }) {
+                    selectedModelName = available.first?.name ?? ""
+                }
             }
         }
         .fileImporter(isPresented: $showOpenFilePicker, allowedContentTypes: [.plainText, .sourceCode]) { result in
@@ -1034,6 +1213,7 @@ struct VibeCoderScreen: View {
         }
         .onDisappear {
             generationTask?.cancel()
+            llm.unloadModel()
         }
     }
 
