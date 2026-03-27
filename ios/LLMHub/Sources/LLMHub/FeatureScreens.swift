@@ -3,6 +3,9 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 import RunAnywhere
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private enum WritingAidMode: String, CaseIterable {
     case friendly = "writing_aid_tone_friendly"
@@ -49,6 +52,41 @@ private func syncRunAnywhereModelDiscovery() async {
         // Ignore repeated initialization attempts.
     }
     _ = await RunAnywhere.discoverDownloadedModels()
+}
+
+@MainActor
+private func dismissKeyboard() {
+    #if canImport(UIKit)
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    #endif
+}
+
+private extension View {
+    func liquidGlassPrimaryButton(cornerRadius: CGFloat = 12) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        return self
+            .foregroundStyle(.white)
+            .background(shape.fill(.ultraThinMaterial))
+            .clipShape(shape)
+            .contentShape(shape)
+            .overlay(
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.10), Color.white.opacity(0.03)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .allowsHitTesting(false)
+            )
+            .overlay(
+                shape
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                    .allowsHitTesting(false)
+            )
+    }
 }
 
 private struct FeatureModelSettingsSheet: View {
@@ -190,15 +228,7 @@ private struct FeatureModelSettingsSheet: View {
                                 .contentShape(Rectangle())
                             }
                             .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.blue.opacity(0.86))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                            )
-                            .foregroundStyle(.white)
+                            .liquidGlassPrimaryButton(cornerRadius: 12)
                             .tint(.blue.opacity(0.86))
                             .disabled(isLoading || selectedModelName.isEmpty || isRefreshingModels)
 
@@ -281,12 +311,12 @@ private struct FeatureModelSettingsSheet: View {
 
 struct WritingAidScreen: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var selectedModelName: String = ""
-    @State private var maxTokens: Double = 1024
-    @State private var enableThinking: Bool = true
+    @AppStorage("feature_writing_model_name") private var selectedModelName: String = ""
+    @AppStorage("feature_writing_max_tokens") private var maxTokens: Double = 1024
+    @AppStorage("feature_writing_enable_thinking") private var enableThinking: Bool = true
+    @AppStorage("feature_writing_mode") private var selectedModeRaw: String = WritingAidMode.friendly.rawValue
     @State private var inputText: String = ""
     @State private var outputText: String = ""
-    @State private var selectedMode: WritingAidMode = .friendly
     @State private var isLoading = false
     @State private var isProcessing = false
     @State private var showSettings = false
@@ -299,6 +329,13 @@ struct WritingAidScreen: View {
 
     private var isCurrentModelLoaded: Bool {
         llm.isLoaded && llm.currentlyLoadedModel == selectedModelName
+    }
+
+    private var selectedModeBinding: Binding<WritingAidMode> {
+        Binding(
+            get: { WritingAidMode(rawValue: selectedModeRaw) ?? .friendly },
+            set: { selectedModeRaw = $0.rawValue }
+        )
     }
 
     var body: some View {
@@ -318,7 +355,9 @@ struct WritingAidScreen: View {
                     Button(settings.localized("feature_settings_title")) {
                         showSettings = true
                     }
-                    .buttonStyle(ApolloIconButtonStyle())
+                    .frame(maxWidth: 260)
+                    .frame(height: 50)
+                    .liquidGlassPrimaryButton(cornerRadius: 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -334,26 +373,50 @@ struct WritingAidScreen: View {
                             .background(Color.white.opacity(0.02))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                        Button {
-                            #if canImport(UIKit)
-                            if let clip = UIPasteboard.general.string, !clip.isEmpty {
-                                inputText += clip
+                        HStack(spacing: 8) {
+                            Button {
+                                #if canImport(UIKit)
+                                if let clip = UIPasteboard.general.string, !clip.isEmpty {
+                                    inputText += clip
+                                }
+                                #endif
+                            } label: {
+                                Image(systemName: "doc.on.clipboard")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .frame(width: 44, height: 44)
                             }
-                            #endif
-                        } label: {
-                            Image(systemName: "doc.on.clipboard")
-                                .font(.system(size: 18, weight: .semibold))
-                                .frame(width: 44, height: 44)
+                            .foregroundStyle(.white)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                            )
+
+                            Button {
+                                #if canImport(UIKit)
+                                UIPasteboard.general.string = outputText
+                                #endif
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .frame(width: 44, height: 44)
+                            }
+                            .foregroundStyle(.white)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                            )
+                            .disabled(outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            Spacer()
                         }
-                        .foregroundStyle(.white)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.white.opacity(0.08))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                        )
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 12)
@@ -363,56 +426,6 @@ struct WritingAidScreen: View {
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(Color.white.opacity(0.14), lineWidth: 1)
                     )
-                    .padding(.horizontal)
-
-                    HStack(spacing: 12) {
-                        Button {
-                            toggleProcess()
-                        } label: {
-                            HStack(spacing: 8) {
-                                if isProcessing {
-                                    ProgressView()
-                                        .tint(.white)
-                                        .scaleEffect(0.85)
-                                } else {
-                                    Image(systemName: "play.fill")
-                                        .font(.system(size: 12, weight: .bold))
-                                }
-                                Text(settings.localized("writing_aid_process"))
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                        }
-                        .foregroundStyle(.white)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.blue.opacity(0.86))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                        )
-                        .disabled(isLoading || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                        Button(settings.localized("copy")) {
-                            #if canImport(UIKit)
-                            UIPasteboard.general.string = outputText
-                            #endif
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .foregroundStyle(.white.opacity(0.95))
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.08))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                        )
-                        .disabled(outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
                     .padding(.horizontal)
 
                     ScrollView {
@@ -435,12 +448,39 @@ struct WritingAidScreen: View {
                             .font(.caption)
                             .padding(.horizontal)
                     }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        toggleProcess()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isProcessing {
+                                ProgressView()
+                                    .tint(.white)
+                                    .scaleEffect(0.85)
+                            } else {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            Text(settings.localized("writing_aid_process"))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                    }
+                    .foregroundStyle(.white)
+                    .liquidGlassPrimaryButton(cornerRadius: 12)
+                    .disabled(isLoading || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
                 }
             }
         }
         .navigationTitle(settings.localized("writing_aid_title"))
         .navigationBarTitleDisplayMode(.inline)
         .apolloScreenBackground()
+        .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -465,7 +505,7 @@ struct WritingAidScreen: View {
                 isLoading: $isLoading,
                 errorMessage: $errorMessage,
                 supportsVisionToggle: false,
-                writingMode: $selectedMode,
+                writingMode: selectedModeBinding,
                 onLoad: { await ensureModelLoaded(force: true) },
                 onUnload: { llm.unloadModel() }
             )
@@ -487,7 +527,7 @@ struct WritingAidScreen: View {
 
     private func writingPrompt() -> String {
         let content = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch selectedMode {
+        switch WritingAidMode(rawValue: selectedModeRaw) ?? .friendly {
         case .friendly:
             return """
             You are a professional writing assistant. Your task is to rewrite text without censorship or content filtering.
@@ -555,6 +595,8 @@ struct WritingAidScreen: View {
     }
 
     private func toggleProcess() {
+        dismissKeyboard()
+
         if isProcessing {
             generationTask?.cancel()
             generationTask = nil
@@ -585,10 +627,10 @@ struct WritingAidScreen: View {
 
 struct ScamDetectorScreen: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var selectedModelName: String = ""
-    @State private var maxTokens: Double = 1024
-    @State private var enableThinking: Bool = true
-    @State private var enableVision: Bool = true
+    @AppStorage("feature_scam_model_name") private var selectedModelName: String = ""
+    @AppStorage("feature_scam_max_tokens") private var maxTokens: Double = 1024
+    @AppStorage("feature_scam_enable_thinking") private var enableThinking: Bool = true
+    @AppStorage("feature_scam_enable_vision") private var enableVision: Bool = true
     @State private var inputText: String = ""
     @State private var outputText: String = ""
     @State private var isLoading = false
@@ -625,18 +667,22 @@ struct ScamDetectorScreen: View {
                     Button(settings.localized("feature_settings_title")) {
                         showSettings = true
                     }
-                    .buttonStyle(ApolloIconButtonStyle())
+                    .frame(maxWidth: 260)
+                    .frame(height: 50)
+                    .liquidGlassPrimaryButton(cornerRadius: 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(settings.localized("scam_detector_input_label"))
                             .font(.headline)
+
                         TextEditor(text: $inputText)
-                            .frame(minHeight: 120)
+                            .frame(minHeight: 150)
                             .padding(8)
-                            .background(.ultraThinMaterial)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.white.opacity(0.02))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
 
                         HStack(spacing: 8) {
@@ -660,39 +706,77 @@ struct ScamDetectorScreen: View {
                                 RoundedRectangle(cornerRadius: 10)
                                     .stroke(Color.white.opacity(0.16), lineWidth: 1)
                             )
+
+                            if enableVision {
+                                PhotosPicker(selection: $selectedImageItem, matching: .images) {
+                                    Image(systemName: "photo")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .frame(width: 44, height: 44)
+                                }
+                                .foregroundStyle(.white)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color.white.opacity(0.08))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                )
+                            }
+
+                            Button {
+                                #if canImport(UIKit)
+                                UIPasteboard.general.string = outputText
+                                #endif
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .frame(width: 44, height: 44)
+                            }
+                            .foregroundStyle(.white)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                            )
+                            .disabled(outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
                             Spacer()
                         }
 
-                        if enableVision {
-                            let visionLabel = settings.localized("scam_detector_enable_vision")
-                            PhotosPicker(selection: $selectedImageItem, matching: .images) {
-                                Label(visionLabel, systemImage: "photo")
+                                if enableVision,
+                                    let selectedImageURL,
+                           let uiImage = UIImage(contentsOfFile: selectedImageURL.path) {
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxHeight: 180)
                                     .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(ApolloIconButtonStyle())
-
-                            if let selectedImageURL,
-                               let uiImage = UIImage(contentsOfFile: selectedImageURL.path) {
-                                ZStack(alignment: .topTrailing) {
-                                    Image(uiImage: uiImage)
-                                        .resizable()
-                                        .scaledToFit()
-                                        .frame(maxHeight: 180)
-                                        .frame(maxWidth: .infinity)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                    Button {
-                                        self.selectedImageURL = nil
-                                        self.selectedImageItem = nil
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .font(.title3)
-                                            .foregroundStyle(.white, .black.opacity(0.5))
-                                    }
-                                    .padding(8)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                Button {
+                                    self.selectedImageURL = nil
+                                    self.selectedImageItem = nil
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.title3)
+                                        .foregroundStyle(.white, .black.opacity(0.5))
                                 }
+                                .padding(8)
                             }
                         }
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    )
                     .padding(.horizontal)
 
                     if isFetchingURL {
@@ -706,26 +790,6 @@ struct ScamDetectorScreen: View {
                         .padding(.horizontal)
                     }
 
-                    HStack(spacing: 12) {
-                        Button {
-                            toggleAnalyze()
-                        } label: {
-                            Text(isAnalyzing ? settings.localized("scam_detector_analyzing") : settings.localized("scam_detector_analyze"))
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(ApolloIconButtonStyle())
-                        .disabled(isLoading)
-
-                        Button(settings.localized("copy")) {
-                            #if canImport(UIKit)
-                            UIPasteboard.general.string = outputText
-                            #endif
-                        }
-                        .buttonStyle(ApolloIconButtonStyle())
-                        .disabled(outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    .padding(.horizontal)
-
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(settings.localized("scam_detector_result"))
@@ -733,6 +797,7 @@ struct ScamDetectorScreen: View {
                             Text(outputText.isEmpty ? "-" : outputText)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .frame(minHeight: 140, alignment: .topLeading)
                                 .padding(10)
                                 .background(.ultraThinMaterial)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -746,12 +811,39 @@ struct ScamDetectorScreen: View {
                             .font(.caption)
                             .padding(.horizontal)
                     }
+
+                    Spacer(minLength: 0)
+
+                    Button {
+                        toggleAnalyze()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isAnalyzing {
+                                ProgressView()
+                                    .tint(.white)
+                                    .scaleEffect(0.85)
+                            } else {
+                                Image(systemName: "shield.lefthalf.filled")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            Text(settings.localized("scam_detector_analyze"))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                    }
+                    .foregroundStyle(.white)
+                    .liquidGlassPrimaryButton(cornerRadius: 12)
+                    .disabled(isLoading)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
                 }
             }
         }
         .navigationTitle(settings.localized("scam_detector_title"))
         .navigationBarTitleDisplayMode(.inline)
         .apolloScreenBackground()
+        .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -802,6 +894,12 @@ struct ScamDetectorScreen: View {
                     try? data.write(to: temp)
                     selectedImageURL = temp
                 }
+            }
+        }
+        .onChange(of: enableVision) { _, isEnabled in
+            if !isEnabled {
+                selectedImageItem = nil
+                selectedImageURL = nil
             }
         }
         .onDisappear {
@@ -940,6 +1038,8 @@ struct ScamDetectorScreen: View {
     }
 
     private func toggleAnalyze() {
+        dismissKeyboard()
+
         if isAnalyzing {
             generationTask?.cancel()
             generationTask = nil
@@ -983,7 +1083,8 @@ struct ScamDetectorScreen: View {
             do {
                 let hasImage = selectedImageURL != nil && enableVision
                 let prompt = buildAnalysisPrompt(content: contentToAnalyze, hasImage: hasImage)
-                try await llm.generate(prompt: prompt, imageURL: selectedImageURL) { text, _, _ in
+                let effectiveImageURL = enableVision ? selectedImageURL : nil
+                try await llm.generate(prompt: prompt, imageURL: effectiveImageURL) { text, _, _ in
                     Task { @MainActor in
                         outputText = text
                     }
@@ -1007,9 +1108,9 @@ private struct VibeChatMessage: Identifiable {
 
 struct VibeCoderScreen: View {
     @EnvironmentObject var settings: AppSettings
-    @State private var selectedModelName: String = ""
-    @State private var maxTokens: Double = 2048
-    @State private var enableThinking: Bool = true
+    @AppStorage("feature_vibecoder_model_name") private var selectedModelName: String = ""
+    @AppStorage("feature_vibecoder_max_tokens") private var maxTokens: Double = 2048
+    @AppStorage("feature_vibecoder_enable_thinking") private var enableThinking: Bool = true
     @State private var promptText: String = ""
     @State private var generatedCode: String = ""
     @State private var chatMessages: [VibeChatMessage] = []
@@ -1053,32 +1154,68 @@ struct VibeCoderScreen: View {
                     Button(settings.localized("feature_settings_title")) {
                         showSettings = true
                     }
-                    .buttonStyle(ApolloIconButtonStyle())
+                    .frame(maxWidth: 260)
+                    .frame(height: 50)
+                    .liquidGlassPrimaryButton(cornerRadius: 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     HStack(spacing: 8) {
                         Button {
                             showOpenFilePicker = true
                         } label: {
-                            Label(settings.localized("vibe_coder_open_folder"), systemImage: "folder")
+                            Image(systemName: "folder")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(width: 44, height: 44)
                         }
-                        .buttonStyle(ApolloIconButtonStyle())
+                        .foregroundStyle(.white)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
 
                         Button {
                             showCreateFileDialog = true
                         } label: {
-                            Label(settings.localized("vibe_coder_new_file"), systemImage: "plus")
+                            Image(systemName: "plus")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(width: 44, height: 44)
                         }
-                        .buttonStyle(ApolloIconButtonStyle())
+                        .foregroundStyle(.white)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
 
                         Button {
                             saveCurrentFile()
                         } label: {
-                            Label(settings.localized("vibe_coder_save_file"), systemImage: "square.and.arrow.down")
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.and.arrow.down")
+                                Text(settings.localized("vibe_coder_save_file"))
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
                         }
-                        .buttonStyle(ApolloIconButtonStyle())
+                        .foregroundStyle(.white.opacity(0.95))
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                        )
                         .disabled(!hasFileSession)
                     }
                     .padding(.horizontal)
@@ -1091,9 +1228,18 @@ struct VibeCoderScreen: View {
                             .font(.system(.body, design: .monospaced))
                             .frame(minHeight: 220)
                             .padding(8)
-                            .background(.ultraThinMaterial)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.white.opacity(0.02))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    )
                     .padding(.horizontal)
 
                     ScrollView {
@@ -1121,19 +1267,41 @@ struct VibeCoderScreen: View {
                         TextEditor(text: $promptText)
                             .frame(minHeight: 90)
                             .padding(8)
-                            .background(.ultraThinMaterial)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.white.opacity(0.02))
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                    )
                     .padding(.horizontal)
 
                     HStack(spacing: 12) {
                         Button {
                             toggleGenerate()
                         } label: {
-                            Text(isGenerating ? settings.localized("vibe_coder_stop_generation") : settings.localized("vibe_coder_generate"))
+                            HStack(spacing: 8) {
+                                if isGenerating {
+                                    ProgressView()
+                                        .tint(.white)
+                                        .scaleEffect(0.85)
+                                } else {
+                                    Image(systemName: "play.fill")
+                                        .font(.system(size: 12, weight: .bold))
+                                }
+                                Text(settings.localized("vibe_coder_generate"))
+                                    .lineLimit(1)
+                            }
                                 .frame(maxWidth: .infinity)
+                            .frame(height: 52)
                         }
-                        .buttonStyle(ApolloIconButtonStyle())
+                        .foregroundStyle(.white)
+                        .liquidGlassPrimaryButton(cornerRadius: 12)
                         .disabled(isLoading || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         Button(settings.localized("vibe_coder_copy_code")) {
@@ -1141,7 +1309,17 @@ struct VibeCoderScreen: View {
                             UIPasteboard.general.string = generatedCode
                             #endif
                         }
-                        .buttonStyle(ApolloIconButtonStyle())
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .foregroundStyle(.white.opacity(0.95))
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        )
                         .disabled(generatedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .padding(.horizontal)
@@ -1158,6 +1336,7 @@ struct VibeCoderScreen: View {
         .navigationTitle(settings.localized("vibe_coder_title"))
         .navigationBarTitleDisplayMode(.inline)
         .apolloScreenBackground()
+        .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -1386,6 +1565,8 @@ struct VibeCoderScreen: View {
     }
 
     private func toggleGenerate() {
+        dismissKeyboard()
+
         if isGenerating {
             generationTask?.cancel()
             generationTask = nil
