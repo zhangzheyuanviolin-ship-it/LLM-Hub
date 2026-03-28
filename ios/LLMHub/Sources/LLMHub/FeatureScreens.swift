@@ -175,16 +175,16 @@ private struct FeatureModelSettingsSheet: View {
                                     maxTokens = min(max(1, maxTokens), maxContextCap)
                                 }
                             }
-                            .tint(.blue.opacity(0.86))
+                            .tint(.white.opacity(0.92))
 
                             if selectedModelSupportsThinking {
                                 Toggle(settings.localized("enable_thinking"), isOn: $enableThinking)
-                                    .tint(.blue.opacity(0.86))
+                                    .tint(.white.opacity(0.9))
                                     .foregroundColor(.white)
                             }
                             if selectedModelSupportsVision {
                                 Toggle(settings.localized("scam_detector_enable_vision"), isOn: $enableVision)
-                                    .tint(.blue.opacity(0.86))
+                                    .tint(.white.opacity(0.9))
                                     .foregroundColor(.white)
                             }
 
@@ -229,7 +229,7 @@ private struct FeatureModelSettingsSheet: View {
                             }
                             .frame(maxWidth: .infinity)
                             .liquidGlassPrimaryButton(cornerRadius: 12)
-                            .tint(.blue.opacity(0.86))
+                            .tint(.white.opacity(0.92))
                             .disabled(isLoading || selectedModelName.isEmpty || isRefreshingModels)
 
                             if isSelectedModelLoaded {
@@ -352,11 +352,18 @@ struct WritingAidScreen: View {
                         .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
-                    Button(settings.localized("feature_settings_title")) {
+                    Button {
                         showSettings = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text(settings.localized("feature_settings_title"))
+                            Spacer()
+                        }
+                        .frame(height: 50)
+                        .contentShape(Rectangle())
                     }
                     .frame(maxWidth: 260)
-                    .frame(height: 50)
                     .liquidGlassPrimaryButton(cornerRadius: 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -664,11 +671,18 @@ struct ScamDetectorScreen: View {
                         .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
-                    Button(settings.localized("feature_settings_title")) {
+                    Button {
                         showSettings = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text(settings.localized("feature_settings_title"))
+                            Spacer()
+                        }
+                        .frame(height: 50)
+                        .contentShape(Rectangle())
                     }
                     .frame(maxWidth: 260)
-                    .frame(height: 50)
                     .liquidGlassPrimaryButton(cornerRadius: 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1151,11 +1165,18 @@ struct VibeCoderScreen: View {
                         .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
-                    Button(settings.localized("feature_settings_title")) {
+                    Button {
                         showSettings = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text(settings.localized("feature_settings_title"))
+                            Spacer()
+                        }
+                        .frame(height: 50)
+                        .contentShape(Rectangle())
                     }
                     .frame(maxWidth: 260)
-                    .frame(height: 50)
                     .liquidGlassPrimaryButton(cornerRadius: 12)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

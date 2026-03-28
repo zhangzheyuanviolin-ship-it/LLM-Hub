@@ -88,7 +88,7 @@ struct ChatSettingsSheet: View {
                             }
                             .padding(.bottom, 8)
                             
-                            ConfigSlider(title: settings.localized("context_window_size"), value: $draftContextWindow, range: 1...modelMaxContextWindow, format: "%.0f", subtitle: "max \(Int(modelMaxContextWindow))", onCommit: applyDraftToViewModel)
+                            ConfigSlider(title: settings.localized("context_window_size"), value: $draftContextWindow, range: 1...modelMaxContextWindow, format: "%.0f", subtitle: "max \(Int(modelMaxContextWindow))", step: contextWindowStep, onCommit: applyDraftToViewModel)
                             ConfigSlider(title: settings.localized("max_tokens"), value: $draftMaxTokens, range: 1...draftMaxTokensCap, format: "%.0f", subtitle: "<= context", onCommit: applyDraftToViewModel)
                             ConfigSlider(title: settings.localized("top_k"), value: $draftTopK, range: 1...256, format: "%.0f", onCommit: applyDraftToViewModel)
                             ConfigSlider(title: settings.localized("top_p"), value: $draftTopP, range: 0...1, format: "%.2f", onCommit: applyDraftToViewModel)
@@ -165,10 +165,10 @@ struct ChatSettingsSheet: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding()
-                                .background(vm.selectedModelName == settings.localized("no_model_selected") ? Color.gray.opacity(0.6) : Color.blue.opacity(0.82))
                                 .foregroundColor(.white)
-                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                                .contentShape(Rectangle())
                             }
+                            .liquidGlassPrimaryButton(cornerRadius: 14)
                             .disabled(vm.isBackendLoading || vm.selectedModelName == settings.localized("no_model_selected"))
                             
                             if vm.loadedModelName != nil {
@@ -207,6 +207,12 @@ struct ChatSettingsSheet: View {
             }
             .onChange(of: vm.selectedModelName) { _ in
                 syncDraftFromViewModel()
+            }
+            .onChange(of: draftContextWindow) { _, newValue in
+                let cap = min(max(1, newValue), modelMaxContextWindow)
+                if draftMaxTokens > cap {
+                    draftMaxTokens = cap
+                }
             }
         }
     }
@@ -248,6 +254,11 @@ struct ChatSettingsSheet: View {
 
     private var draftMaxTokensCap: Double {
         min(max(1, draftContextWindow), modelMaxContextWindow)
+    }
+
+    private var contextWindowStep: Double {
+        let maxWindow = max(1, Int(modelMaxContextWindow))
+        return Double(max(1, maxWindow / 1024))
     }
 
     private func syncDraftFromViewModel() {
@@ -298,6 +309,7 @@ struct ConfigSlider: View {
     let range: ClosedRange<Double>
     let format: String
     var subtitle: String? = nil
+    var step: Double? = nil
     let onCommit: () -> Void
 
     var body: some View {
@@ -315,14 +327,24 @@ struct ConfigSlider: View {
                 Text(String(format: format, value))
                     .font(.system(.subheadline, design: .monospaced))
                     .fontWeight(.bold)
-                    .foregroundColor(.blue.opacity(0.85))
+                    .foregroundColor(.white.opacity(0.92))
             }
-            Slider(value: $value, in: range) { editing in
-                if !editing {
-                    onCommit()
+            Group {
+                if let step {
+                    Slider(value: $value, in: range, step: step) { editing in
+                        if !editing {
+                            onCommit()
+                        }
+                    }
+                } else {
+                    Slider(value: $value, in: range) { editing in
+                        if !editing {
+                            onCommit()
+                        }
+                    }
                 }
             }
-            .accentColor(.blue.opacity(0.85))
+            .tint(.white.opacity(0.92))
         }
     }
 }
@@ -343,7 +365,35 @@ struct ToggleTile: View {
             Spacer()
             Toggle("", isOn: $isOn)
                 .labelsHidden()
-                .tint(.blue.opacity(0.85))
+                .tint(.white.opacity(0.9))
         }
+    }
+}
+
+private extension View {
+    func liquidGlassPrimaryButton(cornerRadius: CGFloat = 12) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        return self
+            .foregroundStyle(.white)
+            .background(shape.fill(.ultraThinMaterial))
+            .clipShape(shape)
+            .contentShape(shape)
+            .overlay(
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.10), Color.white.opacity(0.03)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .allowsHitTesting(false)
+            )
+            .overlay(
+                shape
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
+                    .allowsHitTesting(false)
+            )
     }
 }

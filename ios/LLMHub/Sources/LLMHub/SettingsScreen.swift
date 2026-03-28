@@ -8,7 +8,6 @@ struct SettingsScreen: View {
     var onNavigateBack: () -> Void
     var onNavigateToModels: () -> Void
 
-    @State private var showThemeDialog = false
     @State private var showLanguageDialog = false
     var body: some View {
         ZStack {
@@ -33,17 +32,6 @@ struct SettingsScreen: View {
 
                 // MARK: Appearance Section
                 Section {
-                    SettingsRow(
-                        icon: "paintpalette.fill",
-                        iconColor: .purple,
-                        titleKey: "theme",
-                        subtitleString: settings.localized(settings.theme.displayNameKey)
-                    ) {
-                        showThemeDialog = true
-                    }
-                    .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
-                    .listRowBackground(Color.clear)
-
                     SettingsRow(
                         icon: "globe",
                         iconColor: .blue,
@@ -116,22 +104,6 @@ struct SettingsScreen: View {
                     }
                 }
             }
-        }
-        // Theme Dialog
-        .confirmationDialog(settings.localized("choose_theme"), isPresented: $showThemeDialog, titleVisibility: .visible) {
-            ForEach(AppTheme.allCases) { theme in
-                Button {
-                    settings.theme = theme
-                } label: {
-                    HStack {
-                        Text(settings.localized(theme.displayNameKey))
-                        if settings.theme == theme {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-            Button(settings.localized("cancel"), role: .cancel) {}
         }
         // Language Dialog
         .sheet(isPresented: $showLanguageDialog) {
