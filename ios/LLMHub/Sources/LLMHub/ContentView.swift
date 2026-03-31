@@ -13,6 +13,8 @@ struct ContentView: View {
                     switch route {
                     case "writing_aid":
                         path.append(Screen.writingAid)
+                    case "transcriber":
+                        path.append(Screen.transcriber)
                     case "scam_detector":
                         path.append(Screen.scamDetector)
                     case "vibe_coder":
@@ -43,6 +45,9 @@ struct ContentView: View {
                 case .writingAid:
                     WritingAidScreen(onNavigateBack: { path.removeLast() })
                         .navigationBarBackButtonHidden(true)
+                case .transcriber:
+                    TranscriberScreen(onNavigateBack: { path.removeLast() })
+                        .navigationBarBackButtonHidden(true)
                 case .scamDetector:
                     ScamDetectorScreen(onNavigateBack: { path.removeLast() })
                         .navigationBarBackButtonHidden(true)
@@ -60,6 +65,7 @@ enum Screen: Hashable {
     case models
     case settings
     case writingAid
+    case transcriber
     case scamDetector
     case vibeCoder
 }

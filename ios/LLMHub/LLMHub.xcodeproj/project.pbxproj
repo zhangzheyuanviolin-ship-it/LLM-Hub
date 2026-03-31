@@ -347,6 +347,8 @@
 				DEVELOPMENT_TEAM = 4RLR59VC5F;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = LLMHub;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "LLM Hub uses your microphone to transcribe speech on-device.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "LLM Hub uses speech recognition to transcribe your audio on-device.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;
@@ -376,6 +378,8 @@
 				DEVELOPMENT_TEAM = 4RLR59VC5F;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = LLMHub;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "LLM Hub uses your microphone to transcribe speech on-device.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "LLM Hub uses speech recognition to transcribe your audio on-device.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleDefault;

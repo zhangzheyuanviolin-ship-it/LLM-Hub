@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
+@preconcurrency import AVFoundation
+import CoreMedia
 import PhotosUI
+@preconcurrency import Speech
 import UniformTypeIdentifiers
 import RunAnywhere
 #if canImport(UIKit)
@@ -425,6 +428,470 @@ private struct FeatureModelSettingsSheet: View {
         }
         if supportsVisionToggle && !selectedModelSupportsVision {
             enableVision = false
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private actor SpeechEngine {
+    private let audioEngine = AVAudioEngine()
+    private let speechRecognizer = SFSpeechRecognizer()
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+
+    func start(onTranscriptUpdate: @escaping @Sendable (String) -> Void, onError: @escaping @Sendable (Error) -> Void) throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
+
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        guard let recognitionRequest = recognitionRequest else {
+            throw NSError(domain: "SpeechEngine", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unable to create request"])
+        }
+        
+        recognitionRequest.shouldReportPartialResults = true
+        
+        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { result, error in
+            if let result = result {
+                onTranscriptUpdate(result.bestTranscription.formattedString)
+            }
+            if let error = error {
+                onError(error)
+            }
+        }
+        
+        let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        inputNode.removeTap(onBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+            recognitionRequest.append(buffer)
+        }
+        
+        audioEngine.prepare()
+        try audioEngine.start()
+    }
+
+    func stop() {
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        recognitionRequest = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+}
+
+@available(iOS 17.0, *)
+@MainActor
+private final class IOSSpeechTranscriber: NSObject, ObservableObject {
+    @Published var transcript: String = ""
+    @Published var isRecording: Bool = false
+    @Published var isTranscribing: Bool = false
+    @Published var isPreparing: Bool = false
+    @Published var selectedAudioURL: URL?
+    
+    private let engine = SpeechEngine()
+    private let speechRecognizer = SFSpeechRecognizer()
+
+    private func logError(_ message: String) {
+        NSLog("[LLMHub][Transcriber] \(message)")
+    }
+
+    func startLiveTranscription() async {
+        logError("startLiveTranscription() called")
+        cancelTranscription()
+        isPreparing = true
+        transcript = ""
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            
+            await self.logError("startLiveTranscription: checking permissions...")
+            let status = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { status in
+                    continuation.resume(returning: status)
+                }
+            }
+            let micAuthorized = await AVAudioApplication.requestRecordPermission()
+            
+            guard status == .authorized && micAuthorized else {
+                await self.logError("Permissions denied: speech=\(status.rawValue), mic=\(micAuthorized)")
+                await MainActor.run { self.isPreparing = false }
+                return
+            }
+
+            do {
+                await self.logError("startLiveTranscription: starting engine...")
+                try await self.engine.start(onTranscriptUpdate: { text in
+                    Task { @MainActor in
+                        self.transcript = text
+                    }
+                }, onError: { error in
+                    Task { @MainActor in
+                        self.logError("Engine error: \(error.localizedDescription)")
+                    }
+                })
+                
+                await MainActor.run {
+                    self.isRecording = true
+                    self.isPreparing = false
+                }
+                await self.logError("Live recording successfully started")
+            } catch {
+                await self.logError("Audio engine failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    self.isPreparing = false
+                    self.isRecording = false
+                }
+            }
+        }
+    }
+
+    func stopLiveTranscription() async {
+        logError("stopLiveTranscription: stopping engine...")
+        await engine.stop()
+        await MainActor.run {
+            self.isRecording = false
+            self.isPreparing = false
+        }
+    }
+
+    func transcribeSelectedAudio() async {
+        guard let url = selectedAudioURL else { return }
+        logError("Transcribing selected audio: \(url.path)...")
+        
+        isTranscribing = true
+        transcript = ""
+        
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        speechRecognizer?.recognitionTask(with: request) { [weak self] result, error in
+            guard let self = self else { return }
+            
+            if let result = result {
+                Task { @MainActor in
+                    self.transcript = result.bestTranscription.formattedString
+                    if result.isFinal {
+                        self.isTranscribing = false
+                    }
+                }
+            }
+            
+            if let error = error {
+                logError("File transcription error: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.isTranscribing = false
+                }
+            }
+        }
+    }
+
+    func cancelTranscription() {
+        logError("cancelTranscription: cleaning up...")
+        Task {
+            await engine.stop()
+        }
+        isRecording = false
+        isTranscribing = false
+        isPreparing = false
+    }
+
+    func cleanup() {
+        cancelTranscription()
+    }
+
+    func setSelectedAudioURL(_ url: URL) {
+        cancelTranscription()
+        selectedAudioURL = url
+        transcript = ""
+    }
+
+    func clearSelectedAudio() {
+        selectedAudioURL = nil
+    }
+}
+
+
+@available(iOS 17.0, *)
+private struct IOS26TranscriberScreen: View {
+    @EnvironmentObject var settings: AppSettings
+    @StateObject private var transcriber = IOSSpeechTranscriber()
+    @State private var showAudioImporter = false
+
+    let onNavigateBack: () -> Void
+
+    private var canStartRecording: Bool {
+        !transcriber.isRecording && !transcriber.isTranscribing && !transcriber.isPreparing
+    }
+
+    private var canUploadAudio: Bool {
+        !transcriber.isRecording && !transcriber.isTranscribing && !transcriber.isPreparing
+    }
+
+    private var canTranscribeUploadedAudio: Bool {
+        transcriber.selectedAudioURL != nil && !transcriber.isRecording && !transcriber.isTranscribing && !transcriber.isPreparing
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            VStack(spacing: 16) {
+                Button {
+                    if transcriber.isRecording {
+                        Task { await transcriber.stopLiveTranscription() }
+                    } else if canStartRecording {
+                        Task { @MainActor in
+                            await transcriber.startLiveTranscription()
+                        }
+                    }
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(.ultraThinMaterial)
+                            .frame(width: 124, height: 124)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                            )
+
+                        if transcriber.isPreparing {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(1.2)
+                        } else {
+                            Image(systemName: transcriber.isRecording ? "stop.fill" : "mic.fill")
+                                .font(.system(size: 42, weight: .bold))
+                                .foregroundStyle(transcriber.isRecording ? .red : .white)
+                        }
+                    }
+                }
+                .contentShape(Circle())
+                .buttonStyle(.plain)
+                .disabled(!transcriber.isRecording && !canStartRecording)
+
+                Text(
+                    transcriber.isPreparing
+                        ? settings.localized("processing")
+                        : transcriber.isRecording
+                        ? settings.localized("transcriber_recording")
+                        : settings.localized("transcriber_record")
+                )
+                .font(.headline)
+
+                Button {
+                    showAudioImporter = true
+                } label: {
+                    HStack {
+                        Image(systemName: "waveform.badge.plus")
+                        Text(settings.localized("transcriber_upload"))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .liquidGlassPrimaryButton(cornerRadius: 12)
+                .disabled(!canUploadAudio)
+
+                if let selectedAudioURL = transcriber.selectedAudioURL {
+                    HStack(spacing: 8) {
+                        Image(systemName: "waveform")
+                            .foregroundStyle(.white.opacity(0.85))
+                        Text(selectedAudioURL.lastPathComponent)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button(role: .destructive) {
+                            transcriber.clearSelectedAudio()
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(10)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .padding()
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            )
+            .padding(.horizontal)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(settings.localized("transcriber_result"))
+                        .font(.headline)
+
+                    Text(transcriber.transcript.isEmpty ? "-" : transcriber.transcript)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minHeight: 140, alignment: .topLeading)
+                        .padding(10)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                    if !transcriber.transcript.isEmpty {
+                        HStack {
+                            Spacer()
+                            Button {
+                                #if canImport(UIKit)
+                                UIPasteboard.general.string = transcriber.transcript
+                                #endif
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .frame(width: 44, height: 44)
+                            }
+                            .foregroundStyle(.white)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                if transcriber.isRecording {
+                    Task { await transcriber.stopLiveTranscription() }
+                } else if transcriber.isTranscribing {
+                    transcriber.cancelTranscription()
+                } else if canTranscribeUploadedAudio {
+                    Task { @MainActor in
+                        await transcriber.transcribeSelectedAudio()
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if transcriber.isPreparing || transcriber.isTranscribing {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(0.85)
+                    } else {
+                        Image(systemName: transcriber.isRecording ? "stop.fill" : "waveform")
+                            .font(.system(size: 12, weight: .bold))
+                    }
+                    Text(buttonTitle)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .liquidGlassPrimaryButton(cornerRadius: 12)
+            .disabled(isBottomButtonDisabled)
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
+        .navigationTitle(settings.localized("transcriber_title"))
+        .navigationBarTitleDisplayMode(.inline)
+        .apolloScreenBackground()
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    transcriber.cleanup()
+                    onNavigateBack()
+                } label: {
+                    Image(systemName: "arrow.left")
+                }
+            }
+        }
+        .fileImporter(
+            isPresented: $showAudioImporter,
+            allowedContentTypes: [.audio],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let first = urls.first {
+                    transcriber.setSelectedAudioURL(first)
+                }
+            case .failure(let error):
+                NSLog("[LLMHub][Transcriber] Audio import failed: \(error.localizedDescription)")
+            }
+        }
+        .onDisappear {
+            transcriber.cleanup()
+        }
+    }
+
+    private var buttonTitle: String {
+        if transcriber.isRecording {
+            return settings.localized("transcriber_stop")
+        }
+        if transcriber.isPreparing {
+            return settings.localized("processing")
+        }
+        if transcriber.isTranscribing {
+            return settings.localized("transcribing_tap_to_cancel")
+        }
+        if transcriber.selectedAudioURL != nil {
+            return settings.localized("transcriber_transcribe")
+        }
+        return settings.localized("transcriber_record")
+    }
+
+    private var isBottomButtonDisabled: Bool {
+        if transcriber.isRecording || transcriber.isTranscribing || transcriber.isPreparing {
+            return false
+        }
+        return transcriber.selectedAudioURL == nil
+    }
+}
+
+struct TranscriberScreen: View {
+    @EnvironmentObject var settings: AppSettings
+    let onNavigateBack: () -> Void
+
+    var body: some View {
+        Group {
+            if #available(iOS 26.0, *) {
+                IOS26TranscriberScreen(onNavigateBack: onNavigateBack)
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "mic.slash")
+                        .font(.system(size: 48, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Text(settings.localized("transcriber_title"))
+                        .font(.title3.weight(.bold))
+                    Text("Live on-device transcriber requires iOS 26 or newer.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .navigationTitle(settings.localized("transcriber_title"))
+                .navigationBarTitleDisplayMode(.inline)
+                .apolloScreenBackground()
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            onNavigateBack()
+                        } label: {
+                            Image(systemName: "arrow.left")
+                        }
+                    }
+                }
+            }
         }
     }
 }
