@@ -11,7 +11,11 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ToolProvider
+import com.google.ai.edge.litertlm.tool
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.llmhub.llmhub.R
 import com.llmhub.llmhub.data.LLMModel
@@ -67,6 +71,15 @@ class LiteRtLmInferenceService(private val applicationContext: Context) : Infere
     private val engineMutex = Mutex()
     private val sessionResetTimes = mutableMapOf<String, Long>()
     private val webSearchService: WebSearchService = DuckDuckGoSearchService()
+
+    // Agent skills tools — set by UnifiedInferenceService when a Gemma-4 model is loaded.
+    // null = no tools (default for all other models).
+    private var agentTools: ChatAgentSkillsTools? = null
+
+    fun setAgentTools(tools: ChatAgentSkillsTools?) {
+        agentTools = tools
+        Log.d(TAG, if (tools != null) "Agent tools enabled" else "Agent tools disabled")
+    }
 
     companion object {
         private const val TAG = "LiteRtLmInference"
@@ -282,6 +295,25 @@ class LiteRtLmInferenceService(private val applicationContext: Context) : Infere
         )
     )
 
+    /**
+     * Build a ConversationConfig wired with agent tools and system instruction.
+     * Call only when [agentTools] is non-null (Gemma-4 loaded).
+     */
+    @OptIn(ExperimentalApi::class)
+    private fun buildAgentConversationConfig(tools: ChatAgentSkillsTools): ConversationConfig {
+        val toolProviders: List<ToolProvider> = listOf(tool(tools))
+        val sysInstruction = Contents.of(ChatAgentSkillsTools.AGENT_SYSTEM_PROMPT)
+        return ConversationConfig(
+            samplerConfig = SamplerConfig(
+                topK = overrideTopK ?: DEFAULT_TOP_K,
+                topP = (overrideTopP ?: DEFAULT_TOP_P).toDouble(),
+                temperature = (overrideTemperature ?: DEFAULT_TEMPERATURE).toDouble()
+            ),
+            systemInstruction = sysInstruction,
+            tools = toolProviders
+        )
+    }
+
     override suspend fun generateResponse(prompt: String, model: LLMModel): String {
         ensureEngineLoaded(model)
         val eng = engine ?: throw IllegalStateException("No engine loaded")
@@ -403,11 +435,29 @@ class LiteRtLmInferenceService(private val applicationContext: Context) : Infere
 
             val contents = Contents.of(*contentParts.toTypedArray<Content>())
 
-            eng.createConversation(buildConversationConfig()).use { conv ->
-                conv.sendMessageAsync(contents).collect { msg ->
-                    val chunk = msg.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-                    val (cleaned, _) = processLlamaStopTokens(chunk)
-                    if (cleaned.isNotEmpty()) emit(cleaned)
+            val localAgentTools = agentTools
+            @OptIn(ExperimentalApi::class)
+            if (localAgentTools != null) {
+                // Gemma-4 agent mode: enable constrained decoding for reliable function-call
+                // extraction, then create conversation with tools + system instruction.
+                ExperimentalFlags.enableConversationConstrainedDecoding = true
+                val agentConfig = buildAgentConversationConfig(localAgentTools)
+                ExperimentalFlags.enableConversationConstrainedDecoding = false
+                Log.d(TAG, "Using agent conversation config with ${localAgentTools.javaClass.simpleName}")
+                eng.createConversation(agentConfig).use { conv ->
+                    conv.sendMessageAsync(contents).collect { msg ->
+                        val chunk = msg.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+                        val (cleaned, _) = processLlamaStopTokens(chunk)
+                        if (cleaned.isNotEmpty()) emit(cleaned)
+                    }
+                }
+            } else {
+                eng.createConversation(buildConversationConfig()).use { conv ->
+                    conv.sendMessageAsync(contents).collect { msg ->
+                        val chunk = msg.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+                        val (cleaned, _) = processLlamaStopTokens(chunk)
+                        if (cleaned.isNotEmpty()) emit(cleaned)
+                    }
                 }
             }
 

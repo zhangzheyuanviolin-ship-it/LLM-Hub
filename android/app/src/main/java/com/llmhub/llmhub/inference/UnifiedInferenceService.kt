@@ -39,6 +39,7 @@ class UnifiedInferenceService(private val context: Context) : InferenceService {
             val currentBackend = currentService.getCurrentlyLoadedBackend()
             if (loaded?.name == model.name && (preferredBackend == null || preferredBackend == currentBackend)) {
                 currentModel = model
+                updateAgentTools(model)
                 return true
             }
         }
@@ -57,6 +58,7 @@ class UnifiedInferenceService(private val context: Context) : InferenceService {
                 currentModel = null
                 throw AllBackendsFailedException("Backend ${currentService.javaClass.simpleName} failed to load model '${model.name}'")
             }
+            updateAgentTools(model)
             return true
         } catch (e: AllBackendsFailedException) {
             currentModel = null
@@ -91,6 +93,7 @@ class UnifiedInferenceService(private val context: Context) : InferenceService {
             val currentBackend = currentService.getCurrentlyLoadedBackend()
             if (loaded?.name == model.name && (preferredBackend == null || preferredBackend == currentBackend)) {
                 currentModel = model
+                updateAgentTools(model)
                 return true
             }
         }
@@ -109,6 +112,7 @@ class UnifiedInferenceService(private val context: Context) : InferenceService {
                 currentModel = null
                 throw AllBackendsFailedException("Backend ${currentService.javaClass.simpleName} failed to load model '${model.name}'")
             }
+            updateAgentTools(model)
             return true
         } catch (e: AllBackendsFailedException) {
             currentModel = null
@@ -201,6 +205,19 @@ class UnifiedInferenceService(private val context: Context) : InferenceService {
             "gguf" -> if ((nexaService as? com.llmhub.llmhub.inference.NexaInferenceService)?.isAvailable() == true) nexaService.getEffectiveMaxTokens(model) else mediaPipeService.getEffectiveMaxTokens(model)
             "litertlm" -> liteRtLmService.getEffectiveMaxTokens(model)
             else -> mediaPipeService.getEffectiveMaxTokens(model)
+        }
+    }
+
+    /**
+     * Activate or deactivate the Gemma-4 agent skills toolset.
+     * Tools are enabled only for Gemma-4 models because they are specifically trained
+     * for function calling via the LiteRT-LM SDK. All other models get tools cleared.
+     */
+    private fun updateAgentTools(model: LLMModel) {
+        if (model.modelFormat == "litertlm" && model.name.contains("Gemma-4", ignoreCase = true)) {
+            liteRtLmService.setAgentTools(ChatAgentSkillsTools(context))
+        } else {
+            liteRtLmService.setAgentTools(null)
         }
     }
 }
