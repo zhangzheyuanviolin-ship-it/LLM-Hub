@@ -926,9 +926,11 @@ class VibeCoderViewModel(application: Application) : AndroidViewModel(applicatio
             _errorMessage.value = null
             val currentCode = _generatedCode.value
             var codeChatId: String? = null
+            // Hoisted so the SDK-Error retry path in catch can also access it
+            val implementationPrompt = buildFileAwareEditPrompt(prompt, currentCode)
             
             try {
-                // Reset the inference session synchronously (before generation) when context was at 90%.
+                // Reset the inference session synchronously (before generation) when context was at 75%.
                 // This clears the Nexa KV cache via destroy+reload so the new generation starts fresh.
                 if (needsContextReset) {
                     val session = chatSessionStore[_activeChatSessionId.value]
@@ -948,7 +950,6 @@ class VibeCoderViewModel(application: Application) : AndroidViewModel(applicatio
                     topP = 0.95f,
                     temperature = 0.2f
                 )
-                val implementationPrompt = buildFileAwareEditPrompt(prompt, currentCode)
                 
                 val activeSession = chatSessionStore[_activeChatSessionId.value]
                 codeChatId = activeSession?.inferenceChatId ?: "vibe-coder-${UUID.randomUUID()}"
@@ -992,12 +993,61 @@ class VibeCoderViewModel(application: Application) : AndroidViewModel(applicatio
                 Log.d("VibeCoderVM", "Generation cancelled")
                 endStreamingAssistant("Generation cancelled.")
             } catch (e: Exception) {
+                val message = e.message ?: ""
+
+                // SDK Error (e.g. KV cache overflow when actual tokens exceed the context window).
+                // Auto-reset the session and retry the generation once before surfacing the error.
+                if (message.contains("SDK Error")) {
+                    Log.w("VibeCoderVM", "SDK Error (likely KV full) — auto-resetting session and retrying: $message")
+                    try {
+                        val session = chatSessionStore[_activeChatSessionId.value]
+                        val oldId = session?.inferenceChatId ?: codeChatId ?: ""
+                        val newId = "vibe-coder-${UUID.randomUUID()}"
+                        if (session != null) {
+                            session.inferenceChatId = newId
+                            saveSettings()
+                        }
+                        ringCharOffset = _chatMessages.value.sumOf { it.text.length }
+                        recalculateContextUsage()
+                        runCatching { inferenceService.resetChatSession(oldId) }
+                        val retryMaxTokens = _selectedMaxTokens.value.coerceAtLeast(512)
+                        applyGenerationParametersToService(
+                            maxTokens = retryMaxTokens, topK = 40, topP = 0.95f, temperature = 0.2f
+                        )
+                        codeChatId = newId
+                        beginStreamingAssistant()
+                        val retryFlow = inferenceService.generateResponseStreamWithSession(
+                            prompt = implementationPrompt,
+                            model = model,
+                            chatId = newId,
+                            images = emptyList(),
+                            audioData = null,
+                            webSearchEnabled = false
+                        )
+                        var retryText = ""
+                        retryFlow.collect { token ->
+                            retryText += token
+                            updateStreamingAssistant(retryText)
+                        }
+                        val (proposedCode, proposedLanguage) = extractCodeAndLanguage(retryText)
+                        if (proposedCode.isNotBlank() && isUsableGeneratedFile(proposedCode)) {
+                            applyAutoProposal(normalizedPrompt, currentPromptMessageId, proposedCode, proposedLanguage)
+                            endStreamingAssistant(retryText.ifBlank { "Updated `${_currentFileName.value}`." })
+                        } else {
+                            endStreamingAssistant(retryText.ifBlank { "No usable code produced. Try refining your prompt." })
+                        }
+                        return@launch
+                    } catch (retryEx: Exception) {
+                        Log.e("VibeCoderVM", "Retry after SDK Error also failed: ${retryEx.message}", retryEx)
+                        // fall through to normal error handling
+                    }
+                }
+
                 // If a reset happened while streaming, discard partial output and clear chat history.
                 if (codeChatId != null && inferenceService.wasSessionRecentlyReset(codeChatId)) {
                     handleSessionResetDuringGeneration(codeChatId)
                     return@launch
                 }
-                val message = e.message ?: ""
                 val shouldShowError = !message.contains("cancelled", ignoreCase = true) &&
                                     !message.contains("Previous invocation still processing", ignoreCase = true) &&
                                     !message.contains("StandaloneCoroutine", ignoreCase = true)
@@ -1243,8 +1293,8 @@ class VibeCoderViewModel(application: Application) : AndroidViewModel(applicatio
         val effectiveChars = (rawChars - ringCharOffset).coerceAtLeast(0) +
                 _generatedCode.value.length + newPrompt.length
         val estimatedTokens = (effectiveChars / 4).coerceAtLeast(0)
-        val threshold = (maxTokens * 0.9).toInt().coerceAtLeast(1)
-        Log.d("VibeCoderVM", "Context pre-check: est=$estimatedTokens threshold=$threshold (90%) max=$maxTokens")
+        val threshold = (maxTokens * 0.75).toInt().coerceAtLeast(1)
+        Log.d("VibeCoderVM", "Context pre-check: est=$estimatedTokens threshold=$threshold (75%) max=$maxTokens")
         return estimatedTokens >= threshold
     }
 
