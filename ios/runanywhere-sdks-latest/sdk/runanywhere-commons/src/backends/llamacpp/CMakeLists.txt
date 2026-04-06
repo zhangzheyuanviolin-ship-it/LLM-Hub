@@ -133,6 +133,7 @@ if(RAC_VLM_USE_MTMD)
         ${llamacpp_SOURCE_DIR}/tools/mtmd/mtmd.cpp
         ${llamacpp_SOURCE_DIR}/tools/mtmd/mtmd-helper.cpp
         ${llamacpp_SOURCE_DIR}/tools/mtmd/mtmd-audio.cpp
+        ${llamacpp_SOURCE_DIR}/tools/mtmd/mtmd-image.cpp
         ${llamacpp_SOURCE_DIR}/tools/mtmd/clip.cpp
     )
     # Add mtmd model implementations (clip_graph_* classes)
@@ -155,6 +156,9 @@ if(RAC_VLM_USE_MTMD)
         ${llamacpp_SOURCE_DIR}/tools/mtmd/models/mobilenetv5.cpp
         ${llamacpp_SOURCE_DIR}/tools/mtmd/models/paddleocr.cpp
         ${llamacpp_SOURCE_DIR}/tools/mtmd/models/nemotron-v2-vl.cpp
+        ${llamacpp_SOURCE_DIR}/tools/mtmd/models/gemma4v.cpp
+        ${llamacpp_SOURCE_DIR}/tools/mtmd/models/hunyuanocr.cpp
+        ${llamacpp_SOURCE_DIR}/tools/mtmd/models/deepseekocr.cpp
     )
 endif()
 
