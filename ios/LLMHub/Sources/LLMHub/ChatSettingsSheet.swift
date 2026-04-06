@@ -117,7 +117,8 @@ struct ChatSettingsSheet: View {
                         .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 8)
 
                         // Modality Toggle Tiles
-                        if let model = currentModel, (model.supportsVision || model.supportsAudio || model.supportsThinking) {
+                        let visionAvailable = currentModel.map { $0.supportsVision && LLMBackend.shared.isVisionProjectorAvailable(for: $0) } ?? false
+                        if let model = currentModel, (visionAvailable || model.supportsAudio || model.supportsThinking) {
                             VStack(alignment: .leading, spacing: 16) {
                                 HStack {
                                     Image(systemName: "sparkles")
@@ -128,7 +129,7 @@ struct ChatSettingsSheet: View {
                                 }
                                 .padding(.bottom, 4)
                                 
-                                if model.supportsVision {
+                                if visionAvailable {
                                     ToggleTile(title: settings.localized("enable_vision"), isOn: $vm.enableVision, icon: "eye.fill")
                                 }
                                 if model.supportsAudio {

@@ -486,7 +486,8 @@ class ChatViewModel: ObservableObject {
     @discardableResult
     func sendMessage(imageURL: URL? = nil, audioURL: URL? = nil) -> Bool {
         let selectedModel = chatModel(named: selectedModelName)
-        let effectiveImageURL = (enableVision && selectedModel?.supportsVision == true) ? imageURL : nil
+        let effectiveImageURL = (enableVision && selectedModel?.supportsVision == true
+            && (selectedModel.map { LLMBackend.shared.isVisionProjectorAvailable(for: $0) } ?? false)) ? imageURL : nil
         let effectiveAudioURL = (enableAudio && selectedModel?.supportsAudio == true) ? audioURL : nil
 
         let input = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1497,6 +1498,7 @@ struct ChatScreen: View {
             HStack(spacing: 8) {
                 let selectedModel = ModelData.models.first(where: { $0.name == vm.selectedModelName })
                 let canAttachVision = (selectedModel?.supportsVision == true) && vm.enableVision
+                    && (selectedModel.map { LLMBackend.shared.isVisionProjectorAvailable(for: $0) } ?? false)
                 let canAttachAudio = (selectedModel?.supportsAudio == true) && vm.enableAudio
 
                 if canAttachVision {
