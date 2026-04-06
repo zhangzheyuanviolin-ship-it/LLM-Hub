@@ -219,12 +219,12 @@ func binaryTargets() -> [Target] {
             .binaryTarget(
                 name: "RACommonsBinary",
                 url: "https://github.com/timmyy123/LLM-Hub/releases/download/ios-sdk-v\(sdkVersion)-patched-v2/RACommons-v\(sdkVersion).zip",
-                checksum: "bd5048981e11777466415efa8ebafdf123cecdc3a11ee338ddcdc84300ddd937"
+                checksum: "a02a723cf94b66095b9e5899fee6572502203446e7f30dc3ed9430bcbef3e7ee"
             ),
             .binaryTarget(
                 name: "RABackendLlamaCPPBinary",
                 url: "https://github.com/timmyy123/LLM-Hub/releases/download/ios-sdk-v\(sdkVersion)-patched-v2/RABackendLLAMACPP-v\(sdkVersion).zip",
-                checksum: "c4cd3092ef9fa00b9ff14ddcd73d2700cbe507dad0f5952e85165438de97d6bd"
+                checksum: "ed07ca13724e334ea38598df3f430ef7794245371dea0f69347aa5309cef4bfe"
             ),
         ]
 

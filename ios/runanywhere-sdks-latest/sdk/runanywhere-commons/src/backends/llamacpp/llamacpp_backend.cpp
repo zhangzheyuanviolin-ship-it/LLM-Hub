@@ -458,15 +458,39 @@ std::string LlamaCppTextGeneration::apply_chat_template(
         chat_messages.push_back({role_storage.back().c_str(), content.c_str()});
     }
 
+    // Detect model architecture for architecture-aware template fallback
+    std::string model_arch;
+    model_arch.resize(64);
+    int32_t arch_len = llama_model_meta_val_str(model_, "general.architecture",
+                                                model_arch.data(), model_arch.size());
+    if (arch_len > 0) {
+        model_arch.resize(arch_len);
+        LOGI("Model architecture: %s", model_arch.c_str());
+    } else {
+        model_arch.clear();
+    }
+
+    // Extract chat template from model metadata. Start with a large buffer because
+    // Gemma 4 and other modern models have Jinja templates that easily exceed 2048 bytes.
     std::string model_template;
-    model_template.resize(2048);
+    model_template.resize(1024 * 64); // 64 KB initial buffer
     int32_t template_len = llama_model_meta_val_str(model_, "tokenizer.chat_template",
                                                     model_template.data(), model_template.size());
+
+    // If the template was larger than our buffer, resize and fetch again.
+    if (template_len > (int32_t)model_template.size()) {
+        model_template.resize(template_len + 1);
+        template_len = llama_model_meta_val_str(model_, "tokenizer.chat_template",
+                                                model_template.data(), model_template.size());
+    }
 
     const char* tmpl_to_use = nullptr;
     if (template_len > 0) {
         model_template.resize(template_len);
+        LOGI("Extracted chat template from model metadata, length: %d", template_len);
         tmpl_to_use = model_template.c_str();
+    } else {
+        LOGI("No chat template found in model metadata (len=%d), will use arch-based fallback", template_len);
     }
 
     std::string formatted;
@@ -490,13 +514,21 @@ std::string LlamaCppTextGeneration::apply_chat_template(
     }
 
     if (result < 0) {
-        // The model's embedded template failed (e.g. TranslateGemma requires structured
-        // content dicts that llama.cpp can't pass via llama_chat_message). Fall back to
-        // llama.cpp's built-in auto-detected template (nullptr) which correctly handles
-        // Gemma3 and other common architectures instead of the broken "role: text" format.
-        LOGI("Model template failed (result=%d), retrying with llama.cpp auto-detect template", result);
+        // The model's embedded Jinja template failed. Use an architecture-aware built-in
+        // template: Gemma variants need "gemma3" template; others fall back to nullptr
+        // (chatml). Passing nullptr produces <|im_start|> tokens which Gemma ignores.
+        const char* fallback_tmpl = nullptr;
+        if (!model_arch.empty() &&
+            (model_arch.find("gemma") != std::string::npos)) {
+            fallback_tmpl = "gemma3";
+            LOGI("Model template failed (result=%d), using 'gemma3' built-in template for arch=%s",
+                 result, model_arch.c_str());
+        } else {
+            LOGI("Model template failed (result=%d), retrying with llama.cpp auto-detect template (arch=%s)",
+                 result, model_arch.c_str());
+        }
         try {
-            result = llama_chat_apply_template(nullptr, chat_messages.data(), chat_messages.size(),
+            result = llama_chat_apply_template(fallback_tmpl, chat_messages.data(), chat_messages.size(),
                                                add_assistant_token, formatted.data(), formatted.size());
         } catch (...) {
             result = -1;
