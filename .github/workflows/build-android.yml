@@ -1,4 +1,4 @@
-name: Build Android APK (Full Assets)
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -33,33 +33,16 @@ jobs:
       run: |
         echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" > android/local.properties
         echo "DEBUG_PREMIUM=false" >> android/local.properties
-        cat android/local.properties
 
-    - name: Pre-create asset directories
-      run: |
-        mkdir -p android/qnn_pack/src/main/assets/qnnlibs
-        mkdir -p android/sd_pack/src/main/assets/cvtbase
-        mkdir -p android/nexa_npu_pack/src/main/assets/npu
-
-    - name: Build Full APK with all assets
+    - name: Build APK
       run: |
         cd android
         chmod +x gradlew
-        # Build APK with all Asset Pack assets merged into base module
-        ./gradlew assembleRelease -PincludeAssetPackFiles -PexcludeAssetPackFiles --no-daemon --stacktrace
+        ./gradlew assembleRelease --no-daemon
 
-    - name: Find APK
-      id: find_apk
-      run: |
-        APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" -type f | head -n 1)
-        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-        echo "Found APK: $APK_PATH"
-        ls -lh "$APK_PATH"
-
-    - name: Upload APK Artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: LLM-Hub-full-apk
-        path: ${{ steps.find_apk.outputs.apk_path }}
+        name: LLM-Hub-apk
+        path: android/app/build/outputs/apk/release/*.apk
         retention-days: 30
-        if-no-files-found: error
