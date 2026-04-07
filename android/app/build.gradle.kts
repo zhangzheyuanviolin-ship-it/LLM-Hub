@@ -1,7 +1,5 @@
 import java.util.Properties
 import java.io.FileInputStream
-import java.util.zip.ZipFile
-import java.util.zip.ZipEntry
 
 // Load local.properties at the top-level so it's available everywhere
 val localProperties = Properties()
@@ -59,8 +57,9 @@ android {
         localeFilters += listOf("en", "es", "pt", "de", "fr", "ru", "it", "tr", "pl", "ar", "ja", "id", "in", "ko", "fa", "he", "iw", "uk", "zh")
     }
 
-    // 移除 assetPacks 配置，直接构建包含所有资产的 APK
-    // assetPacks 配置会导致资产被分离，我们需要所有资产都在基础 APK 中
+    // 保留 assetPacks 配置但构建时会包含所有资产
+    // 使用 Play Asset Delivery 机制
+    assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
 
     buildTypes {
         release {
