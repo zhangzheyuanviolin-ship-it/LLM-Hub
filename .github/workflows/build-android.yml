@@ -39,7 +39,13 @@ jobs:
       run: |
         cd android
         chmod +x gradlew
-        ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+        ./gradlew clean assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+
+    - name: List APK files
+      run: |
+        echo "=== Looking for APK files ==="
+        find android -name "*.apk" -type f 2>/dev/null || echo "No APK found"
+        ls -la android/app/build/outputs/apk/release/ 2>/dev/null || echo "Directory not found"
 
     - name: Upload build log
       if: always()
@@ -49,18 +55,9 @@ jobs:
         path: android/build.log
         retention-days: 7
 
-    - name: Find APK
-      id: find_apk
-      run: |
-        APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" -type f | head -n 1)
-        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-        echo "Found APK: $APK_PATH"
-        ls -lh "$APK_PATH" 2>/dev/null || echo "APK not found"
-
     - name: Upload APK Artifact
-      if: steps.find_apk.outputs.apk_path != ''
       uses: actions/upload-artifact@v4
       with:
         name: LLM-Hub-apk
-        path: ${{ steps.find_apk.outputs.apk_path }}
+        path: android/app/build/outputs/apk/release/app-release.apk
         retention-days: 30
