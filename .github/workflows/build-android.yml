@@ -37,27 +37,43 @@ jobs:
 
     - name: Create local.properties
       run: |
-        cd android
-        echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" > local.properties
-        echo "DEBUG_PREMIUM=false" >> local.properties
-        cat local.properties
-      working-directory: .
+        echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" > android/local.properties
+        echo "DEBUG_PREMIUM=false" >> android/local.properties
+        cat android/local.properties
 
-    - name: Pre-create asset directories
+    - name: Merge Asset Pack assets into main app module
       run: |
-        mkdir -p android/qnn_pack/src/main/assets/qnnlibs
-        mkdir -p android/sd_pack/src/main/assets/cvtbase
-        mkdir -p android/nexa_npu_pack/src/main/assets/npu
+        # Copy qnnlibs from qnn_pack to app/src/main/assets
+        if [ -d "android/qnn_pack/src/main/assets/qnnlibs" ]; then
+          mkdir -p android/app/src/main/assets/qnnlibs
+          cp -rv android/qnn_pack/src/main/assets/qnnlibs/* android/app/src/main/assets/qnnlibs/
+        fi
+        
+        # Copy cvtbase from sd_pack to app/src/main/assets
+        if [ -d "android/sd_pack/src/main/assets/cvtbase" ]; then
+          mkdir -p android/app/src/main/assets/cvtbase
+          cp -rv android/sd_pack/src/main/assets/cvtbase/* android/app/src/main/assets/cvtbase/
+        fi
+        
+        # Extract and copy npu assets from Nexa AAR
+        mkdir -p android/app/src/main/assets/npu
+        cd android
+        # Download Nexa AAR and extract npu assets
+        wget -q https://github.com/NexaAI/core/releases/download/v0.0.24/core-0.0.24.aar -O /tmp/nex.aar || true
+        if [ -f /tmp/nex.aar ]; then
+          cd /tmp
+          unzip -q -o nex.aar "assets/npu/htp-files-v*" -d npu_extract
+          if [ -d "npu_extract/assets/npu" ]; then
+            cp -rv npu_extract/assets/npu/* /workspace/android/app/src/main/assets/npu/
+          fi
+        fi
+        cd /workspace
 
     - name: Build Full APK with all assets
       run: |
         cd android
         chmod +x gradlew
-        # Build APK with all Asset Pack assets merged into base module
-        # -PincludeAssetPackFiles: Include asset pack source directories
-        # -PexcludeAssetPacks: Exclude asset pack modules from build
-        ./gradlew assembleRelease -PincludeAssetPackFiles -PexcludeAssetPackFiles --no-daemon --stacktrace
-      working-directory: ./android
+        ./gradlew assembleRelease --no-daemon --stacktrace
 
     - name: Find APK
       id: find_apk
@@ -74,16 +90,6 @@ jobs:
         path: ${{ steps.find_apk.outputs.apk_path }}
         retention-days: 30
         if-no-files-found: error
-
-    - name: Create Release (Optional)
-      if: false
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: v3.7.1-${{ github.event.inputs.version_suffix || 'cn-full' }}
-        name: LLM Hub v3.7.1 ${{ github.event.inputs.version_suffix || '(Full Assets)' }}
-        files: ${{ steps.find_apk.outputs.apk_path }}
-        generate_release_notes: true
-        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Build Summary
       run: |
