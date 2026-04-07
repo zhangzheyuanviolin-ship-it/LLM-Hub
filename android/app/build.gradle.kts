@@ -21,20 +21,6 @@ android {
     namespace = "com.llmhub.llmhub"
     compileSdk = 36
 
-    // 条件性包含 Asset Pack 资产目录 - 用于完整 APK 构建
-    sourceSets {
-        getByName("main") {
-            assets.srcDirs = listOf("src/main/assets")
-            if (project.hasProperty("includeAssetPackFiles")) {
-                assets.srcDirs += listOf(
-                    "../qnn_pack/src/main/assets",
-                    "../sd_pack/src/main/assets",
-                    "../nexa_npu_pack/src/main/assets/npu"
-                )
-            }
-        }
-    }
-
     defaultConfig {
         applicationId = "com.llmhub.llmhub"
         minSdk = 27
@@ -73,10 +59,8 @@ android {
         localeFilters += listOf("en", "es", "pt", "de", "fr", "ru", "it", "tr", "pl", "ar", "ja", "id", "in", "ko", "fa", "he", "iw", "uk", "zh")
     }
 
-    // 条件性配置 assetPacks - 当指定 -PexcludeAssetPackFiles 时排除
-    if (!project.hasProperty("excludeAssetPackFiles")) {
-        assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
-    }
+    // 移除 assetPacks 配置，直接构建包含所有资产的 APK
+    // assetPacks 配置会导致资产被分离，我们需要所有资产都在基础 APK 中
 
     buildTypes {
         release {
@@ -200,7 +184,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 }
 
-// Asset management for APK builds - ensure assets are present
+// 确保 APK 构建时资产文件存在
 val qnnlibsDir = project.file("src/main/assets/qnnlibs")
 val qnnlibsHiddenDir = project.file("src/main/assets/.qnnlibs_hidden")
 val cvtbaseDir = project.file("src/main/assets/cvtbase")
