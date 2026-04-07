@@ -1,4 +1,4 @@
-name: Build Android APK (Full Assets)
+name: Build Android APK
 
 on:
   workflow_dispatch:
@@ -28,62 +28,21 @@ jobs:
       uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: wrapper
-        cache-disabled: false
 
     - name: Create local.properties
       run: |
         echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" > android/local.properties
         echo "DEBUG_PREMIUM=false" >> android/local.properties
-        cat android/local.properties
 
-    - name: Merge Asset Pack assets into main app module
-      run: |
-        echo "Merging qnnlibs..."
-        if [ -d "android/qnn_pack/src/main/assets/qnnlibs" ]; then
-          mkdir -p android/app/src/main/assets/qnnlibs
-          cp -rv android/qnn_pack/src/main/assets/qnnlibs/. android/app/src/main/assets/qnnlibs/
-        fi
-        
-        echo "Merging cvtbase..."
-        if [ -d "android/sd_pack/src/main/assets/cvtbase" ]; then
-          mkdir -p android/app/src/main/assets/cvtbase
-          cp -rv android/sd_pack/src/main/assets/cvtbase/. android/app/src/main/assets/cvtbase/
-        fi
-        
-        echo "Extracting NPU assets from Nexa AAR..."
-        mkdir -p android/app/src/main/assets/npu
-        cd android
-        wget -q https://repo1.maven.org/maven2/ai/nexa/core/0.0.24/core-0.0.24.aar -O /tmp/nex.aar || echo "Download failed"
-        if [ -f /tmp/nex.aar ]; then
-          cd /tmp
-          unzip -q -o nex.aar "assets/npu/*" -d npu_extract || true
-          if [ -d "npu_extract/assets/npu" ]; then
-            cp -rv npu_extract/assets/npu/. /workspace/android/app/src/main/assets/npu/ 2>/dev/null || cp -rv npu_extract/assets/npu/. android/app/src/main/assets/npu/
-          fi
-          cd /workspace
-        fi
-        
-        echo "Asset merge complete"
-        ls -la android/app/src/main/assets/
-
-    - name: Build Full APK with all assets
+    - name: Build APK
       run: |
         cd android
         chmod +x gradlew
-        ./gradlew assembleRelease --no-daemon --stacktrace
+        ./gradlew assembleRelease --no-daemon
 
-    - name: Find APK
-      id: find_apk
-      run: |
-        APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" -type f | head -n 1)
-        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
-        echo "Found APK: $APK_PATH"
-        ls -lh "$APK_PATH"
-
-    - name: Upload APK Artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: LLM-Hub-full-apk
-        path: ${{ steps.find_apk.outputs.apk_path }}
+        name: LLM-Hub-apk
+        path: android/app/build/outputs/apk/release/*.apk
         retention-days: 30
-        if-no-files-found: error
