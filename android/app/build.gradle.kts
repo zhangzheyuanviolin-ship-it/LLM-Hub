@@ -27,12 +27,24 @@ android {
         versionCode = 93
         versionName = "3.7.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        
         val hfToken: String = localProperties.getProperty("HF_TOKEN", "")
         buildConfigField("String", "HF_TOKEN", "\"$hfToken\"")
+        
         val debugPremium: Boolean = localProperties.getProperty("DEBUG_PREMIUM", "false").toBoolean()
         buildConfigField("Boolean", "DEBUG_PREMIUM", "$debugPremium")
+        
+        // AdMob IDs
         val admobAppId: String = localProperties.getProperty("ADMOB_APP_ID", "ca-app-pub-3940256099942544~3347511713")
+        val admobBannerId: String = localProperties.getProperty("ADMOB_BANNER_ID", "ca-app-pub-3940256099942544/6300978111")
+        val admobInterstitialId: String = localProperties.getProperty("ADMOB_INTERSTITIAL_ID", "ca-app-pub-3940256099942544/1033173712")
+        val admobRewardedId: String = localProperties.getProperty("ADMOB_REWARDED_ID", "ca-app-pub-3940256099942544/5224354917")
+        
         buildConfigField("String", "ADMOB_APP_ID", "\"$admobAppId\"")
+        buildConfigField("String", "ADMOB_BANNER_ID", "\"$admobBannerId\"")
+        buildConfigField("String", "ADMOB_INTERSTITIAL_ID", "\"$admobInterstitialId\"")
+        buildConfigField("String", "ADMOB_REWARDED_ID", "\"$admobRewardedId\"")
+        
         manifestPlaceholders["admobAppId"] = admobAppId
         ndk { abiFilters += setOf("arm64-v8a"); debugSymbolLevel = "FULL" }
     }
@@ -67,7 +79,7 @@ android {
         }
         jniLibs {
             useLegacyPackaging = true
-            pickFirsts += setOf("**/libmediapipe_tasks_text_jni.so")
+            pickFirsts += setOf("**/libonnxruntime.so", "**/libmediapipe_tasks_text_jni.so")
             excludes += setOf("**/libdeepseek-ocr.so", "**/libstable-diffusion.so")
         }
     }
