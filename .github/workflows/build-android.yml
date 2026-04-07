@@ -33,16 +33,34 @@ jobs:
       run: |
         echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" > android/local.properties
         echo "DEBUG_PREMIUM=false" >> android/local.properties
+        cat android/local.properties
 
     - name: Build APK
       run: |
         cd android
         chmod +x gradlew
-        ./gradlew assembleRelease --no-daemon
+        ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
 
-    - name: Upload APK
+    - name: Upload build log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: android/build.log
+        retention-days: 7
+
+    - name: Find APK
+      id: find_apk
+      run: |
+        APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" -type f | head -n 1)
+        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+        echo "Found APK: $APK_PATH"
+        ls -lh "$APK_PATH" 2>/dev/null || echo "APK not found"
+
+    - name: Upload APK Artifact
+      if: steps.find_apk.outputs.apk_path != ''
       uses: actions/upload-artifact@v4
       with:
         name: LLM-Hub-apk
-        path: android/app/build/outputs/apk/release/*.apk
+        path: ${{ steps.find_apk.outputs.apk_path }}
         retention-days: 30
