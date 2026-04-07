@@ -1,0 +1,103 @@
+name: Build Android APK (Full Assets)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: 'Version suffix (e.g., cn-full)'
+        required: false
+        default: 'cn-full'
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: wrapper
+        cache-disabled: false
+
+    - name: Create local.properties
+      run: |
+        cd android
+        echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" > local.properties
+        echo "DEBUG_PREMIUM=false" >> local.properties
+        cat local.properties
+      working-directory: .
+
+    - name: Pre-create asset directories
+      run: |
+        mkdir -p android/qnn_pack/src/main/assets/qnnlibs
+        mkdir -p android/sd_pack/src/main/assets/cvtbase
+        mkdir -p android/nexa_npu_pack/src/main/assets/npu
+
+    - name: Build Full APK with all assets
+      run: |
+        cd android
+        chmod +x gradlew
+        # Build APK with all Asset Pack assets merged into base module
+        # -PincludeAssetPackFiles: Include asset pack source directories
+        # -PexcludeAssetPacks: Exclude asset pack modules from build
+        ./gradlew assembleRelease -PincludeAssetPackFiles -PexcludeAssetPackFiles --no-daemon --stacktrace
+      working-directory: ./android
+
+    - name: Find APK
+      id: find_apk
+      run: |
+        APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" -type f | head -n 1)
+        echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+        echo "Found APK: $APK_PATH"
+        ls -lh "$APK_PATH"
+
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: LLM-Hub-full-apk
+        path: ${{ steps.find_apk.outputs.apk_path }}
+        retention-days: 30
+        if-no-files-found: error
+
+    - name: Create Release (Optional)
+      if: false
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v3.7.1-${{ github.event.inputs.version_suffix || 'cn-full' }}
+        name: LLM Hub v3.7.1 ${{ github.event.inputs.version_suffix || '(Full Assets)' }}
+        files: ${{ steps.find_apk.outputs.apk_path }}
+        generate_release_notes: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build Summary
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Build completed successfully!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### APK Information" >> $GITHUB_STEP_SUMMARY
+        echo "- **Path**: \`android/app/build/outputs/apk/release/app-release.apk\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Download**: Check the Artifacts section above" >> $GITHUB_STEP_SUMMARY
+        echo "- **Retention**: 30 days" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Build Configuration" >> $GITHUB_STEP_SUMMARY
+        echo "- Asset Packs: Merged into APK" >> $GITHUB_STEP_SUMMARY
+        echo "- Includes: qnnlibs, cvtbase, npu HTP files" >> $GITHUB_STEP_SUMMARY
+        echo "- Architecture: arm64-v8a only" >> $GITHUB_STEP_SUMMARY
+        echo "- Version: 3.7.1 (versionCode 93)" >> $GITHUB_STEP_SUMMARY
