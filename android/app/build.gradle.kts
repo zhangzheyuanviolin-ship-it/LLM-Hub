@@ -1,7 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
 
-// Load local.properties at the top-level so it's available everywhere
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
@@ -25,53 +24,29 @@ android {
         targetSdk = 36
         versionCode = 93
         versionName = "3.7.1"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         val hfToken: String = localProperties.getProperty("HF_TOKEN", "")
         buildConfigField("String", "HF_TOKEN", "\"$hfToken\"")
         val debugPremium: Boolean = localProperties.getProperty("DEBUG_PREMIUM", "false").toBoolean()
         buildConfigField("Boolean", "DEBUG_PREMIUM", "$debugPremium")
-
-        // AdMob IDs
-        val admobAppId: String = localProperties.getProperty(
-            "ADMOB_APP_ID", "ca-app-pub-3940256099942544~3347511713")
-        val admobBannerId: String = localProperties.getProperty(
-            "ADMOB_BANNER_ID", "ca-app-pub-3940256099942544/6300978111")
-        val admobInterstitialId: String = localProperties.getProperty(
-            "ADMOB_INTERSTITIAL_ID", "ca-app-pub-3940256099942544/1033173712")
-        val admobRewardedId: String = localProperties.getProperty(
-            "ADMOB_REWARDED_ID", "ca-app-pub-3940256099942544/5224354917")
+        val admobAppId: String = localProperties.getProperty("ADMOB_APP_ID", "ca-app-pub-3940256099942544~3347511713")
         buildConfigField("String", "ADMOB_APP_ID", "\"$admobAppId\"")
-        buildConfigField("String", "ADMOB_BANNER_ID", "\"$admobBannerId\"")
-        buildConfigField("String", "ADMOB_INTERSTITIAL_ID", "\"$admobInterstitialId\"")
-        buildConfigField("String", "ADMOB_REWARDED_ID", "\"$admobRewardedId\"")
         manifestPlaceholders["admobAppId"] = admobAppId
-        
-        ndk {
-            abiFilters += setOf("arm64-v8a")
-            debugSymbolLevel = "FULL"
-        }
+        ndk { abiFilters += setOf("arm64-v8a") }
     }
     
     androidResources {
         localeFilters += listOf("en", "es", "pt", "de", "fr", "ru", "it", "tr", "pl", "ar", "ja", "id", "in", "ko", "fa", "he", "iw", "uk", "zh")
     }
 
-    // 保留 assetPacks 配置但构建时会包含所有资产
-    // 使用 Play Asset Delivery 机制
-    assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
+    // 移除 assetPacks - 直接构建包含所有依赖的 APK
+    // assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
 
     buildTypes {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            ndk {
-                debugSymbolLevel = "NONE"
-            }
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -79,18 +54,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlin {
-        compilerOptions {
-            jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
-        }
-    }
-    buildFeatures {
-        compose = true
-        buildConfig = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.0"
-    }
+    kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11 } }
+    buildFeatures { compose = true; buildConfig = true }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.0" }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -103,14 +69,7 @@ android {
         jniLibs {
             useLegacyPackaging = true
             pickFirsts += setOf("**/libmediapipe_tasks_text_jni.so")
-            excludes += setOf("**/libdeepseek-ocr.so")
-            excludes += setOf("**/libstable-diffusion.so")
-        }
-    }
-    
-    bundle {
-        language {
-            enableSplit = false
+            excludes += setOf("**/libdeepseek-ocr.so", "**/libstable-diffusion.so")
         }
     }
 }
@@ -166,9 +125,7 @@ dependencies {
     implementation("com.github.jeziellago:compose-markdown:0.3.0")
     implementation("com.vladsch.flexmark:flexmark-all:0.64.8")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.24.1")
-    implementation("ai.nexa:core:0.0.24") {
-        exclude(group = "com.microsoft.onnxruntime")
-    }
+    implementation("ai.nexa:core:0.0.24") { exclude(group = "com.microsoft.onnxruntime") }
     implementation("com.google.android.play:asset-delivery:2.2.2")
     implementation("com.google.android.play:asset-delivery-ktx:2.2.2")
     implementation("com.android.billingclient:billing-ktx:7.1.1")
@@ -181,29 +138,4 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-}
-
-// 确保 APK 构建时资产文件存在
-val qnnlibsDir = project.file("src/main/assets/qnnlibs")
-val qnnlibsHiddenDir = project.file("src/main/assets/.qnnlibs_hidden")
-val cvtbaseDir = project.file("src/main/assets/cvtbase")
-val cvtbaseHiddenDir = project.file("src/main/assets/.cvtbase_hidden")
-
-tasks.register("ensureAssetsForApk") {
-    doLast {
-        if (qnnlibsHiddenDir.exists() && !qnnlibsDir.exists()) {
-            logger.lifecycle("Restoring qnnlibs for APK build")
-            qnnlibsHiddenDir.renameTo(qnnlibsDir)
-        }
-        if (cvtbaseHiddenDir.exists() && !cvtbaseDir.exists()) {
-            logger.lifecycle("Restoring cvtbase for APK build")
-            cvtbaseHiddenDir.renameTo(cvtbaseDir)
-        }
-    }
-}
-
-tasks.configureEach {
-    if (name.startsWith("assemble") && name.contains("Release", ignoreCase = true)) {
-        dependsOn("ensureAssetsForApk")
-    }
 }
