@@ -21,21 +21,6 @@ android {
     namespace = "com.llmhub.llmhub"
     compileSdk = 36
 
-    // 条件性包含 Asset Pack 资产目录
-    // 当指定 -PincludeAssetPackFiles 时，将 Asset Pack 资产合并到主模块
-    sourceSets {
-        getByName("main") {
-            assets.srcDirs = listOf("src/main/assets")
-            if (project.hasProperty("includeAssetPackFiles")) {
-                assets.srcDirs += listOf(
-                    "../qnn_pack/src/main/assets",
-                    "../sd_pack/src/main/assets",
-                    "../nexa_npu_pack/src/main/assets/npu"
-                )
-            }
-        }
-    }
-
     defaultConfig {
         applicationId = "com.llmhub.llmhub"
         minSdk = 27
@@ -84,10 +69,7 @@ android {
     // Configure asset packs for install-time delivery
     // nexa_npu_pack delivers assets/npu/htp-files-v81/ and htp-files-v85/ (~230 MB)
     // keeping the base module well under Play Store's 200 MB limit
-    // 当指定 -PexcludeAssetPacks 时，移除 assetPacks 配置（资产已合并到主模块）
-    if (!project.hasProperty("excludeAssetPacks")) {
-        assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
-    }
+    assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
 
     buildTypes {
         release {
