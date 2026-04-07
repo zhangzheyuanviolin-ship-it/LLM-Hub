@@ -2,11 +2,6 @@ name: Build Android APK (Full Assets)
 
 on:
   workflow_dispatch:
-    inputs:
-      version_suffix:
-        description: 'Version suffix (e.g., cn-full)'
-        required: false
-        default: 'cn-full'
 
 env:
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
@@ -43,31 +38,33 @@ jobs:
 
     - name: Merge Asset Pack assets into main app module
       run: |
-        # Copy qnnlibs from qnn_pack to app/src/main/assets
+        echo "Merging qnnlibs..."
         if [ -d "android/qnn_pack/src/main/assets/qnnlibs" ]; then
           mkdir -p android/app/src/main/assets/qnnlibs
-          cp -rv android/qnn_pack/src/main/assets/qnnlibs/* android/app/src/main/assets/qnnlibs/
+          cp -rv android/qnn_pack/src/main/assets/qnnlibs/. android/app/src/main/assets/qnnlibs/
         fi
         
-        # Copy cvtbase from sd_pack to app/src/main/assets
+        echo "Merging cvtbase..."
         if [ -d "android/sd_pack/src/main/assets/cvtbase" ]; then
           mkdir -p android/app/src/main/assets/cvtbase
-          cp -rv android/sd_pack/src/main/assets/cvtbase/* android/app/src/main/assets/cvtbase/
+          cp -rv android/sd_pack/src/main/assets/cvtbase/. android/app/src/main/assets/cvtbase/
         fi
         
-        # Extract and copy npu assets from Nexa AAR
+        echo "Extracting NPU assets from Nexa AAR..."
         mkdir -p android/app/src/main/assets/npu
         cd android
-        # Download Nexa AAR and extract npu assets
-        wget -q https://github.com/NexaAI/core/releases/download/v0.0.24/core-0.0.24.aar -O /tmp/nex.aar || true
+        wget -q https://repo1.maven.org/maven2/ai/nexa/core/0.0.24/core-0.0.24.aar -O /tmp/nex.aar || echo "Download failed"
         if [ -f /tmp/nex.aar ]; then
           cd /tmp
-          unzip -q -o nex.aar "assets/npu/htp-files-v*" -d npu_extract
+          unzip -q -o nex.aar "assets/npu/*" -d npu_extract || true
           if [ -d "npu_extract/assets/npu" ]; then
-            cp -rv npu_extract/assets/npu/* /workspace/android/app/src/main/assets/npu/
+            cp -rv npu_extract/assets/npu/. /workspace/android/app/src/main/assets/npu/ 2>/dev/null || cp -rv npu_extract/assets/npu/. android/app/src/main/assets/npu/
           fi
+          cd /workspace
         fi
-        cd /workspace
+        
+        echo "Asset merge complete"
+        ls -la android/app/src/main/assets/
 
     - name: Build Full APK with all assets
       run: |
@@ -90,20 +87,3 @@ jobs:
         path: ${{ steps.find_apk.outputs.apk_path }}
         retention-days: 30
         if-no-files-found: error
-
-    - name: Build Summary
-      run: |
-        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Build completed successfully!" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### APK Information" >> $GITHUB_STEP_SUMMARY
-        echo "- **Path**: \`android/app/build/outputs/apk/release/app-release.apk\`" >> $GITHUB_STEP_SUMMARY
-        echo "- **Download**: Check the Artifacts section above" >> $GITHUB_STEP_SUMMARY
-        echo "- **Retention**: 30 days" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Build Configuration" >> $GITHUB_STEP_SUMMARY
-        echo "- Asset Packs: Merged into APK" >> $GITHUB_STEP_SUMMARY
-        echo "- Includes: qnnlibs, cvtbase, npu HTP files" >> $GITHUB_STEP_SUMMARY
-        echo "- Architecture: arm64-v8a only" >> $GITHUB_STEP_SUMMARY
-        echo "- Version: 3.7.1 (versionCode 93)" >> $GITHUB_STEP_SUMMARY
