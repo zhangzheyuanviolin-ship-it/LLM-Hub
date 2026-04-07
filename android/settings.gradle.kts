@@ -28,7 +28,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "Llm Hub"
 include(":app")
-// 移除 Asset Pack 模块，所有资产将直接包含在基础 APK 中
-// include(":qnn_pack")
-// include(":sd_pack")
-// include(":nexa_npu_pack")
+include(":qnn_pack")
+include(":sd_pack")
+include(":nexa_npu_pack")
