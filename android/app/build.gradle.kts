@@ -1,5 +1,7 @@
 import java.util.Properties
 import java.io.FileInputStream
+import java.util.zip.ZipFile
+import java.util.zip.ZipEntry
 
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
@@ -32,28 +34,25 @@ android {
         val admobAppId: String = localProperties.getProperty("ADMOB_APP_ID", "ca-app-pub-3940256099942544~3347511713")
         buildConfigField("String", "ADMOB_APP_ID", "\"$admobAppId\"")
         manifestPlaceholders["admobAppId"] = admobAppId
-        ndk { abiFilters += setOf("arm64-v8a") }
+        ndk { abiFilters += setOf("arm64-v8a"); debugSymbolLevel = "FULL" }
     }
     
     androidResources {
         localeFilters += listOf("en", "es", "pt", "de", "fr", "ru", "it", "tr", "pl", "ar", "ja", "id", "in", "ko", "fa", "he", "iw", "uk", "zh")
     }
 
-    // 移除 assetPacks - 直接构建包含所有依赖的 APK
-    // assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
+    assetPacks += mutableSetOf(":qnn_pack", ":sd_pack", ":nexa_npu_pack")
 
     buildTypes {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            ndk { debugSymbolLevel = "NONE" }
             signingConfig = signingConfigs.getByName("debug")
         }
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
-    }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_11; targetCompatibility = JavaVersion.VERSION_11 }
     kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11 } }
     buildFeatures { compose = true; buildConfig = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.0" }
@@ -72,6 +71,7 @@ android {
             excludes += setOf("**/libdeepseek-ocr.so", "**/libstable-diffusion.so")
         }
     }
+    bundle { language { enableSplit = false } }
 }
 
 configurations.all {
@@ -139,3 +139,69 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+
+// Extract npu HTP assets from Nexa AAR
+val nexaAarConfig by configurations.creating { isCanBeConsumed = false; isCanBeResolved = true }
+dependencies { nexaAarConfig("ai.nexa:core:0.0.24@aar") }
+val npuPackAssetsDir = rootProject.file("nexa_npu_pack/src/main/assets/npu")
+val extractNexaNpuAssets by tasks.registering {
+    description = "Extracts npu assets from Nexa AAR"
+    group = "build setup"
+    inputs.files(nexaAarConfig)
+    outputs.dir(npuPackAssetsDir)
+    outputs.upToDateWhen { npuPackAssetsDir.resolve("htp-files-v81").exists() && npuPackAssetsDir.resolve("htp-files-v85").exists() }
+    doLast {
+        val aar = nexaAarConfig.singleFile
+        npuPackAssetsDir.deleteRecursively()
+        npuPackAssetsDir.mkdirs()
+        var extracted = 0
+        ZipFile(aar).use { zip ->
+            zip.entries().toList().asSequence()
+                .filter { !it.isDirectory && it.name.startsWith("assets/npu/htp-files-v") }
+                .forEach { entry ->
+                    val rel = entry.name.removePrefix("assets/npu/")
+                    val target = npuPackAssetsDir.resolve(rel)
+                    target.parentFile.mkdirs()
+                    zip.getInputStream(entry).use { src -> target.outputStream().use { dst -> src.copyTo(dst) } }
+                    extracted++
+                }
+        }
+        logger.lifecycle("extractNexaNpu: extracted $extracted files")
+    }
+}
+
+val isBundleBuild = gradle.startParameter.taskNames.any { it.contains("bundle", ignoreCase = true) }
+if (isBundleBuild) {
+    tasks.configureEach {
+        val n = name
+        if ((n.startsWith("merge") && n.contains("Assets", ignoreCase = true)) || (n.startsWith("assetPack") && n.contains("PreBundleTask", ignoreCase = true))) {
+            dependsOn(extractNexaNpuAssets)
+        }
+    }
+}
+
+if (isBundleBuild) {
+    tasks.configureEach {
+        if (name.startsWith("merge") && name.contains("Assets", ignoreCase = true)) {
+            outputs.upToDateWhen { false }
+            doLast {
+                outputs.files.forEach { outDir -> outDir.resolve("cvtbase").deleteRecursively(); outDir.resolve("qnnlibs").deleteRecursively() }
+                outputs.files.asFileTree.matching { include("npu/**") }.filter { it.isFile }.forEach { f -> f.delete() }
+                outputs.files.asFileTree.matching { include("npu/**") }.filter { it.isDirectory }.sortedByDescending { it.absolutePath.length }.forEach { it.delete() }
+                outputs.files.asFileTree.matching { include("npu") }.filter { it.isDirectory && (it.listFiles()?.isEmpty() == true) }.forEach { it.delete() }
+            }
+        }
+    }
+}
+
+val qnnlibsDir = project.file("src/main/assets/qnnlibs")
+val qnnlibsHiddenDir = project.file("src/main/assets/.qnnlibs_hidden")
+val cvtbaseDir = project.file("src/main/assets/cvtbase")
+val cvtbaseHiddenDir = project.file("src/main/assets/.cvtbase_hidden")
+tasks.register("ensureAssetsForApk") {
+    doLast {
+        if (qnnlibsHiddenDir.exists() && !qnnlibsDir.exists()) qnnlibsHiddenDir.renameTo(qnnlibsDir)
+        if (cvtbaseHiddenDir.exists() && !cvtbaseDir.exists()) cvtbaseHiddenDir.renameTo(cvtbaseDir)
+    }
+}
+tasks.configureEach { if (name.startsWith("assemble") && name.contains("Release", ignoreCase = true)) dependsOn("ensureAssetsForApk") }
